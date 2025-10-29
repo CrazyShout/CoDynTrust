@@ -54,7 +54,7 @@ def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
     result_stat: dict
         A dictionary contains fp, tp and gt number.
     iou_thresh : float
-        The iou thresh.
+        The iou thresh. 一般是0.3/0.5/0.7
     """
     # fp, tp and gt in the current frame
     fp = []
@@ -62,30 +62,30 @@ def caluclate_tp_fp(det_boxes, det_score, gt_boxes, result_stat, iou_thresh):
     gt = gt_boxes.shape[0]
     if det_boxes is not None:
         # convert bounding boxes to numpy array
-        det_boxes = common_utils.torch_tensor_to_numpy(det_boxes)
-        det_score = common_utils.torch_tensor_to_numpy(det_score)
-        gt_boxes = common_utils.torch_tensor_to_numpy(gt_boxes)
+        det_boxes = common_utils.torch_tensor_to_numpy(det_boxes) # (N, 8, 3)
+        det_score = common_utils.torch_tensor_to_numpy(det_score) # (N, )
+        gt_boxes = common_utils.torch_tensor_to_numpy(gt_boxes) # (N_gt, 8, 3)
 
         # sort the prediction bounding box by score
-        score_order_descend = np.argsort(-det_score)
-        det_score = det_score[score_order_descend]
-        det_polygon_list = list(common_utils.convert_format(det_boxes))
+        score_order_descend = np.argsort(-det_score) # 返回置信度从大到小的排序的索引
+        det_score = det_score[score_order_descend] # （N,）
+        det_polygon_list = list(common_utils.convert_format(det_boxes)) # 返回一个列表，有N个元素，每一个为Polygon对象，由2d bev bbx构成
         gt_polygon_list = list(common_utils.convert_format(gt_boxes))
 
         # match prediction and gt bounding box
-        for i in range(score_order_descend.shape[0]):
+        for i in range(score_order_descend.shape[0]): # 遍历每一个object
             det_polygon = det_polygon_list[score_order_descend[i]]
-            ious = common_utils.compute_iou(det_polygon, gt_polygon_list)
+            ious = common_utils.compute_iou(det_polygon, gt_polygon_list) # 计算IoU
 
-            if len(gt_polygon_list) == 0 or np.max(ious) < iou_thresh:
+            if len(gt_polygon_list) == 0 or np.max(ious) < iou_thresh: # 小于阈值 0.3/0.5/0.7 则标记为fp 反正例
                 fp.append(1)
                 tp.append(0)
                 continue
 
             fp.append(0)
-            tp.append(1)
+            tp.append(1) 
 
-            gt_index = np.argmax(ious)
+            gt_index = np.argmax(ious) # 最大值索引
             gt_polygon_list.pop(gt_index)
         result_stat[iou_thresh]['score'] += det_score.tolist()
     result_stat[iou_thresh]['fp'] += fp

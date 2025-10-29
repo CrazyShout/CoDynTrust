@@ -358,7 +358,7 @@ class raindrop_fuse(nn.Module):
         batch_reserved_mask = self.regroup(reserved_mask, record_len, k=1)
 
         # debug use
-        batch_flow_gt = self.regroup(flow_gt, record_len, k=2)
+        batch_flow_gt = self.regroup(flow_gt, record_len, k=2) # past0-cur flow （B，N， H， W，2）
 
         updated_features_list = []
         flow_list = []
@@ -369,7 +369,7 @@ class raindrop_fuse(nn.Module):
             N = record_len[b]
             node_features = batch_node_features[b]
             node_features = node_features.view(-1, K, C, H, W) # (N, k, C, H, W)
-            flow = batch_flow_map[b] # .view(-1, 2, H, W) # [N, H, W, 2]
+            flow = batch_flow_map[b] # .view(-1, 2, H, W) # [N, H, W, 2] 每一个sample的flow
             flow = self.fine_conv(flow) # [N, H, W, 2]
             flow_list.append(flow)
             # # motion net flow
@@ -380,28 +380,28 @@ class raindrop_fuse(nn.Module):
             # state_class_pred_list.append(state_class_pred)
             
             latest_node_features = node_features[:, 0, :, :, :] # past_0 features, (N, C, H, W) 
-            updated_features = F.grid_sample(latest_node_features, grid=flow, mode='nearest', align_corners=False)
+            updated_features = F.grid_sample(latest_node_features, grid=flow, mode='nearest', align_corners=False) # 利用flow warp feature
 
-            updated_features = updated_features*batch_reserved_mask[b] # (N, C, H, W)
+            updated_features = updated_features*batch_reserved_mask[b] # (N, C, H, W) 掩码 保留warp后的object区域
             updated_features_list.append(updated_features)
 
             # normalizing GT flow: gt_flow_map [N, H, W, 2]
             # Given disp shift feature
-            x_coord = torch.arange(W).float()   # [0, ..., W]
-            y_coord = torch.arange(H).float()   # [0, ..., H]
-            y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W]
-            grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0).unsqueeze(0).expand(N, -1, -1, -1).to(flow.device)
-            gt_flow_delta = batch_flow_gt[b].view(-1, 2, H, W)
-            gt_flow_map = grid - gt_flow_delta
-            gt_flow_map[:, 0, :, :] = gt_flow_map[:, 0, :, :] / (W / 2.0) - 1.0
+            x_coord = torch.arange(W).float()   # [0, ..., W-1]
+            y_coord = torch.arange(H).float()   # [0, ..., H-1]
+            y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W] 包含着每个栅格点的x值和y值
+            grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0).unsqueeze(0).expand(N, -1, -1, -1).to(flow.device) # （N， 2， H， W）形成了一个坐标网格每个元素是x，y的坐标
+            gt_flow_delta = batch_flow_gt[b].view(-1, 2, H, W) # 调整形状 （N， 2， H， W） past0到cur的 GT flow 
+            gt_flow_map = grid - gt_flow_delta # 相当于原本标准的像素坐标减去了偏移量，也就是将偏移量作用上去 这就是在做光流映射
+            gt_flow_map[:, 0, :, :] = gt_flow_map[:, 0, :, :] / (W / 2.0) - 1.0 # 约束到-1到1之间 这是在做归一化
             gt_flow_map[:, 1, :, :] = gt_flow_map[:, 1, :, :] / (H / 2.0) - 1.0
-            gt_flow_map = gt_flow_map.permute(0, 2, 3, 1) 
+            gt_flow_map = gt_flow_map.permute(0, 2, 3, 1) # （N， H， W， 2）
             gt_flow_map_list.append(gt_flow_map)
 
         flow_pred = torch.cat(flow_list, dim=0) # (sum(N_b), H, W, 2)
         gt_flow_norm = torch.cat(gt_flow_map_list, dim=0) # (sum(N_b), H, W, 2)
         # compute the flow map loss:
-        loss = F.smooth_l1_loss(flow_pred, gt_flow_norm)
+        loss = F.smooth_l1_loss(flow_pred, gt_flow_norm) # 标量
 
         updated_features_all = torch.cat(updated_features_list, dim=0)  # (sum(B,N), C, H, W)
 

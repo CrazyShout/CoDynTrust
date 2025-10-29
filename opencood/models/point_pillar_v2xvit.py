@@ -319,6 +319,8 @@ class PointPillarV2XVit(nn.Module):
         rm = self.reg_head(fused_feature)
 
         output_dict = {'psm': psm,
-                       'rm': rm}
+                       'rm': rm,
+                       'comm_rate': 0 # 兼容设置 并非真的为0
+                       }
 
         return output_dict

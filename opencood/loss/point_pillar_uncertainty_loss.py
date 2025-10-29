@@ -156,11 +156,13 @@ class KLLoss(nn.Module):
         if self.uncertainty_dim == 3:
             xy_diff = input[...,:2] - target[...,:2]
             loss1 = self.xy_loss(xy_diff, sm[...,:2])
-            
+            if torch.isnan(loss1).any():
+                print("===oops: x or y uncertainty loss is NaN!===")
             theta_diff = input[...,7:8] - target[...,7:8]
 
             loss2 = self.angle_weight * self.angle_loss(theta_diff, sm[...,2:3])
-
+            if torch.isnan(loss2).any():
+                print("===oops: angle uncertainty loss is NaN!===")
             loss = torch.cat((loss1, loss2), dim=-1)
             
         elif self.uncertainty_dim == 7:
@@ -222,15 +224,20 @@ class PointPillarUncertaintyLoss(nn.Module):
         output_dict : dict
         target_dict : dict
         """
-        rm = output_dict['rm']  # [B, 14, 50, 176]
-        psm = output_dict['psm'] # [B, 2, 50, 176]
-        sm = output_dict['sm']  # log of sigma^2 / scale [B, 6, 50 176]
+        rm = output_dict['reg_preds']  # [B, 14, 50, 176]  reg_preds
+        psm = output_dict['cls_preds'] # [B, 2, 50, 176]
+        sm = output_dict['unc_preds']  # log of sigma^2 / scale [B, 6, 50 176]
+
+        # print(f"rm shape is {rm.shape}")
+        # print(f"psm shape is {psm.shape}")
+        # print(f"sm shape is {sm.shape}")
+
         targets = target_dict['targets']
 
         cls_preds = psm.permute(0, 2, 3, 1).contiguous() # N, C, H, W -> N, H, W, C
 
         box_cls_labels = target_dict['pos_equal_one']  # [B, 50, 176, 2] 
-        box_cls_labels = box_cls_labels.view(psm.shape[0], -1).contiguous() # -> [B, 50*176*2], two types of anchor
+        box_cls_labels = box_cls_labels.view(psm.shape[0], -1).contiguous() # -> [B, 50*176*2], two types of anchor   (B, 2HW)
 
         positives = box_cls_labels > 0
         negatives = box_cls_labels == 0
@@ -241,10 +248,10 @@ class PointPillarUncertaintyLoss(nn.Module):
         pos_normalizer = positives.sum(1, keepdim=True).float() # positive number per sample
         reg_weights /= torch.clamp(pos_normalizer, min=1.0)
         cls_weights /= torch.clamp(pos_normalizer, min=1.0)
-        cls_targets = box_cls_labels
-        cls_targets = cls_targets.unsqueeze(dim=-1)
+        cls_targets = box_cls_labels # (B, 2HW)
+        cls_targets = cls_targets.unsqueeze(dim=-1) # (B, 2HW, 1)
 
-        cls_targets = cls_targets.squeeze(dim=-1)
+        cls_targets = cls_targets.squeeze(dim=-1)# (B, 2HW) ? so why unsqueeze?
         one_hot_targets = torch.zeros(
             *list(cls_targets.shape), 2,
             dtype=cls_preds.dtype, device=cls_targets.device
@@ -252,7 +259,14 @@ class PointPillarUncertaintyLoss(nn.Module):
         one_hot_targets.scatter_(-1, cls_targets.unsqueeze(dim=-1).long(), 1.0)
         cls_preds = cls_preds.view(psm.shape[0], -1, 1)
         one_hot_targets = one_hot_targets[..., 1:]
-
+        ist = torch.equal(cls_targets, one_hot_targets.squeeze(dim=-1))
+        # print(f"cls_targets and one_hot_targets {ist}")
+        
+        # print(f"cls_preds shape is {cls_preds.shape}")
+        # print(f"cls_targets shape is {cls_targets.shape}")
+        # print(f"one_hot_targets shape is {one_hot_targets.shape}")
+        # print(f"box_cls_labels shape is {box_cls_labels.shape}")
+        # xxx
         cls_loss_src = self.cls_loss_func(cls_preds,
                                           one_hot_targets,
                                           weights=cls_weights)  # [N, M]
@@ -277,8 +291,8 @@ class PointPillarUncertaintyLoss(nn.Module):
         ######## direction ##########
         if self.use_dir:
             dir_targets = self.get_direction_target(targets)
-            N =  output_dict["dm"].shape[0]
-            dir_logits = output_dict["dm"].permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H*W*#anchor, 2]
+            N =  output_dict["dir_preds"].shape[0]
+            dir_logits = output_dict["dir_preds"].permute(0, 2, 3, 1).contiguous().view(N, -1, 2) # [N, H*W*#anchor, 2]
 
 
             dir_loss = softmax_cross_entropy_with_logits(dir_logits.view(-1, self.anchor_num), dir_targets.view(-1, self.anchor_num)) 
@@ -355,6 +369,8 @@ class PointPillarUncertaintyLoss(nn.Module):
             weighted_loss: (B, #anchors, #classes) float tensor after weighting.
         """
         pred_sigmoid = torch.sigmoid(input)
+        # print(f"input shape is {input.shape}")
+        # print(f"target shape is {target.shape}")
         alpha_weight = target * self.alpha + (1 - target) * (1 - self.alpha)
         pt = target * (1.0 - pred_sigmoid) + (1.0 - target) * pred_sigmoid
         focal_weight = alpha_weight * torch.pow(pt, self.gamma)

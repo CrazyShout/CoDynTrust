@@ -354,7 +354,7 @@ class IntermediateFusionDataset(basedataset.BaseDataset):
 
         merged_feature_dict = OrderedDict()
 
-        for i in range(len(processed_feature_list)):
+        for i in range(len(processed_feature_list)): # 对每一个cav遍历
             for feature_name, feature in processed_feature_list[i].items():
                 if feature_name not in merged_feature_dict:
                     merged_feature_dict[feature_name] = []

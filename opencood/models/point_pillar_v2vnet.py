@@ -12,6 +12,7 @@ from opencood.models.sub_modules.base_bev_backbone import BaseBEVBackbone
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
 from opencood.models.sub_modules.naive_compress import NaiveCompressor
 from opencood.models.fuse_modules.v2v_fuse import V2VNetFusion
+from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone 
 
 from icecream import ic
 import torch
@@ -111,8 +112,14 @@ class PointPillarV2VNet(nn.Module):
                                     voxel_size=args['voxel_size'],
                                     point_cloud_range=args['lidar_range'])
         self.scatter = PointPillarScatter(args['point_pillar_scatter'])
-        self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
-        
+        is_resnet = args['base_bev_backbone'].get("resnet", True) # default true
+
+        # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
+        if is_resnet:
+            print("===use resnet as backbone===")
+            self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64) # or you can use ResNetBEVBackbone, which is stronger
+        else:
+            self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64) # or you can use ResNetBEVBackbone, which is stronger
         # used to downsample the feature map for efficient computation
         self.shrink_flag = False
         if 'shrink_header' in args:
@@ -215,7 +222,9 @@ class PointPillarV2VNet(nn.Module):
         rm = self.reg_head(fused_feature)
 
         output_dict = {'psm': psm,
-                       'rm': rm}
+                       'rm': rm,
+                       'comm_rate': 0 # 兼容设置 并非真的为0
+                       }
 
         return output_dict
 

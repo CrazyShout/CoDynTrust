@@ -253,6 +253,7 @@ class PointPillarWhere2comm(nn.Module):
             if self.shrink_flag:
                 fused_feature = self.shrink_conv(fused_feature)
         else:
+            raise ValueError("This is not we want! by xuyunjiag")
             fused_feature, communication_rates, result_dict = self.fusion_net(spatial_features_2d,
                                             psm_single,
                                             record_len,

@@ -1338,7 +1338,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
 
         if self.visualize:
             origin_lidar = []
-        
+            origin_lidar_splitnum = []
+
         for i in range(len(batch)):
             ego_dict = batch[i]['ego']
             single_object_label.append(ego_dict['single_object_dict_stack'])
@@ -1377,7 +1378,8 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
             # time_consume += ego_dict['times']
             if self.visualize:
                 origin_lidar.append(ego_dict['origin_lidar'])
-        
+                origin_lidar_splitnum.append(ego_dict['origin_lidar_splitnum'])
+
         
         # single_object_label = self.post_processor.collate_batch(single_object_label)
         single_object_label = { "pos_equal_one": torch.cat(pos_equal_one_single, dim=0),
@@ -1472,10 +1474,14 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                 torch.from_numpy(np.array(self.anchor_box))})
         
         if self.visualize:
+            # origin_lidar = \
+            #     np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
             origin_lidar = \
-                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
+                np.array(origin_lidar) # 不要打乱，否则将无法分别可视化每个agent的点云 2024年8月16日 xyj
             origin_lidar = torch.from_numpy(origin_lidar)
             output_dict['ego'].update({'origin_lidar': origin_lidar})
+            output_dict['ego'].update({'origin_lidar_splitnum': origin_lidar_splitnum})
+            
 
         if self.viz_bbx_flag:
             single_lidar = []
@@ -1528,6 +1534,7 @@ class IntermediateFusionDatasetIrregularFlowNew(basedataset.BaseDataset):
                                        transformation_matrix_clean_torch,})
 
         output_dict['ego'].update({
+            "camera0_files": batch[0]['ego']['camera0_files'],
             "sample_idx": batch[0]['ego']['sample_idx'],
             "cav_id_list": batch[0]['ego']['cav_id_list']
         })

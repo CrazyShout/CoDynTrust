@@ -43,7 +43,8 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
     deep features to ego.
     """
     def __init__(self, params, visualize, train=True):
-
+        print("start create a IntermediateFusionDatasetV2XSETFlowXYJ object!")
+        
         self.times = []
 
         self.params = params
@@ -56,7 +57,7 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
                                             train)
 
         if 'num_sweep_frames' in params:    # number of frames we use in LSTM
-            self.k = params['num_sweep_frames']
+            self.k = params['num_sweep_frames'] # 3
         else:
             self.k = 0
 
@@ -75,6 +76,13 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         else:
             self.binomial_p = 1
 
+        if 'with_history_frames' in params and params['with_history_frames'] is True:
+            print("===需要历史帧===")
+            self.w_history = True
+        else:
+            print("===不需要历史帧===")
+            self.w_history = False
+
         # 控制 past-0 处是否有扰动
         self.is_no_shift = False
         if 'is_no_shift' in params and params['is_no_shift']:
@@ -89,11 +97,26 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         self.is_ab_regular = False
         if 'is_ab_regular' in params and params['is_ab_regular']:
             self.is_ab_regular = True
+            print("!!! Absolutely Regular !!!")
+
+        # 控制是否需要生成GT flow
+        self.is_generate_gt_flow = False
+        if 'is_generate_gt_flow' in params and params['is_generate_gt_flow']:
+            self.is_generate_gt_flow = True
         
-        self.sample_interval_exp = int(self.binomial_n * self.binomial_p)
+        # 只有在绘制每个sample的匹配框时用到 sizhewei
+        self.viz_bbx_flag = False
+        if 'viz_bbx_flag' in params and params['viz_bbx_flag']:
+            self.viz_bbx_flag = True
+
+        self.num_roi_thres = -1
+        if 'num_roi_thres' in params:
+            self.num_roi_thres = params['num_roi_thres']
+        
+        self.sample_interval_exp = int(self.binomial_n * self.binomial_p) # 理论上十次伯努利实验的结果，1次
 
         assert 'proj_first' in params['fusion']['args']
-        if params['fusion']['args']['proj_first']:
+        if params['fusion']['args']['proj_first']: # 默认false
             self.proj_first = True
         else:
             self.proj_first = False
@@ -114,7 +137,7 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         # first load all paths of different scenarios
         scenario_folders = sorted([os.path.join(root_dir, x)
                                    for x in os.listdir(root_dir) if
-                                   os.path.isdir(os.path.join(root_dir, x))])
+                                   os.path.isdir(os.path.join(root_dir, x))]) # 场景文件夹路径名
         scenario_folders_name = sorted([x
                                    for x in os.listdir(root_dir) if
                                    os.path.isdir(os.path.join(root_dir, x))])
@@ -142,60 +165,69 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         for (i, scenario_folder) in enumerate(scenario_folders):
             self.scenario_database.update({i: OrderedDict()})
 
-            # copy timestamps npy file
-            timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
-            time_annotations = np.load(timestamps_file)
+            # # copy timestamps npy file, store all irregular timestamps of each non-ego vehicle in this scenario
+            # timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
+            # time_annotations = np.load(timestamps_file)
 
             # at least 1 cav should show up
             cav_list = sorted([x 
                             for x in os.listdir(scenario_folder) if 
-                            os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
+                            os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y)) # 列出场景下的车id对应的文件路径
             assert len(cav_list) > 0
 
-            # use the frame number as key, the full path as the values
+            # roadside unit data's id is always negative, so here we want to
+            # make sure they will be in the end of the list as they shouldn't
+            # be ego vehicle.
+            if int(cav_list[0]) < 0:
+                cav_list = cav_list[1:] + [cav_list[0]] # 路端放到最后
+
+            # use the frame number as key, the full path as the values, store all json or yaml files in this scenario
             yaml_files = sorted([x
-                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if # 遍历第一辆车目录下的所有json文件
                         x.endswith(".json")], 
                         key=lambda y:float((y.split('/')[-1]).split('.json')[0]))
             if len(yaml_files)==0:
                 yaml_files = sorted([x 
-                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if # 遍历第一辆车目录下的所有yaml文件
                             x.endswith('.yaml')], key=lambda y:float((y.split('/')[-1]).split('.yaml')[0]))
 
-            start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
-            while(1):
-                time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
-                time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
-                if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
-                    start_timestamp += 1
-                else:
-                    break
+            regular_timestamps = self.extract_timestamps(yaml_files) # 返回的时间戳的列表，如[00068,000070,....] 其中都是字符串
 
-            end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
-            if start_timestamp%2 == 0:
-                # even
-                end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
-            else:
-                end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
-            num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
-            regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
+            # start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
+            # while(1):
+            #     time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
+            #     time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
+            #     if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
+            #         start_timestamp += 1
+            #     else:
+            #         break
+
+            # end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
+            # if start_timestamp%2 == 0:
+            #     # even
+            #     end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
+            # else:
+            #     end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
+            # num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
+            # regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
 
             # loop over all CAV data
             for (j, cav_id) in enumerate(cav_list):
-                if j > self.max_cav - 1:
+                if j > self.max_cav - 1: # 最多不能超过五辆车
                     print('too many cavs')
                     break
                 self.scenario_database[i][cav_id] = OrderedDict()
 
                 cav_path = os.path.join(scenario_folder, cav_id)
-
-                if j==0: # ego
-                    timestamps = regular_timestamps
-                else:
-                    timestamps = list(time_annotations[j-1, :])
-
+                # yaml_files = \
+                #     sorted([os.path.join(cav_path, x)
+                #             for x in os.listdir(cav_path) if
+                #             x.endswith('.yaml') and 'additional' not in x])
+                # timestamps = self.extract_timestamps(yaml_files) # 返回的时间戳的列表，如[00068,000070,....]
+                timestamps = regular_timestamps # 场景下的所有时间戳条目
+                
                 for timestamp in timestamps:
-                    timestamp = "%.3f" % float(timestamp)
+                    timestamp = "%06d" % int(timestamp) # 字符串格式化，保证6位
                     self.scenario_database[i][cav_id][timestamp] = \
                         OrderedDict()
 
@@ -213,34 +245,19 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
                         # camera_files
                 
                 # regular的timestamps 用于做 curr 真实时刻的ground truth
-                self.scenario_database[i][cav_id]['regular'] = OrderedDict()
-                for timestamp in regular_timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id]['regular'][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['lidar'] = \
-                        lidar_file
+                self.scenario_database[i][cav_id]['regular'] = self.scenario_database[i][cav_id]
 
                 # Assume all cavs will have the same timestamps length. Thus
                 # we only need to calculate for the first vehicle in the
                 # scene.
-                if j == 0:  # ego 
+                if j == 0:  # ego  每一个场景的ego会进来依次
                     # we regard the agent with the minimum id as the ego
                     self.scenario_database[i][cav_id]['ego'] = True
                     # num_ego_timestamps = len(timestamps) - (self.tau + self.k - 1)		# 从第 tau+k 个往后, store 0 时刻的 time stamp
-                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k * 3 # TODO:
-                    if not self.len_record:
+                    num_ego_timestamps = len(timestamps) - self.binomial_n * self.k # * 3 # TODO:  减去30个？ 这是因为后面会向后移动30帧作为cur帧，这里防止后面越界
+                    if not self.len_record: # 累增数组
                         self.len_record.append(num_ego_timestamps)
-                    else:
+                    else:# 如果self.len_record不为空，说明这不是第一个场景，那就将当前场景ego车辆的时间戳个数累加上去，最终self.len_record类似[场景1的ego车时间戳个数， 场景1+场景2*， 场景1+场景2+场景3*, ...]
                         prev_last = self.len_record[-1]
                         self.len_record.append(prev_last + num_ego_timestamps)
                 else:
@@ -256,10 +273,10 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
             params['postprocess'],
             train)
 
-        self.anchor_box = self.post_processor.generate_anchor_box()
+        self.anchor_box = self.post_processor.generate_anchor_box() # 返回预设置的锚框
 
-        print("=== OPV2V-Irregular Multi-sweep dataset with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
-
+        print("=== V2XSET-Irregular Multi-sweep dataset with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
+   
     def extract_timestamps(self, yaml_files):
         """
         Given the list of the yaml files, extract the mocked timestamps.
@@ -371,7 +388,7 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
         curr_timestamp_idx = idx if scenario_index == 0 else \
                         idx - self.len_record[scenario_index - 1]
-        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k * 3 # TODO:
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
         
         # load files for all CAVs
         for cav_id, cav_content in scenario_database.items():
@@ -561,6 +578,11 @@ class IntermediateFusionDatasetIrregularSingleframe(basedataset.BaseDataset):
         '''
         # TODO: debug use
         global illegal_path_list
+        # 首先要判断一下是不是要用历史帧，因为我们需要同样数目的数据集来公平比较
+        # 构造函数在初始化的时候已经用两帧来限制数据集，这就保证了都在两帧筛选过的数据集上训练和测试，
+        # 但有的model不需要历史帧，因此在这里才开始改变
+        if self.w_history is not True:
+            self.k = 1
 
         base_data_dict = self.retrieve_base_data(idx)
         ''' base_data_dict structure:

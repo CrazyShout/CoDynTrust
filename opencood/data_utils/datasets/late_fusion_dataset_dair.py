@@ -26,6 +26,7 @@ import opencood.utils.pcd_utils as pcd_utils
 from opencood.utils.transformation_utils import tfm_to_pose
 from opencood.utils.transformation_utils import veh_side_rot_and_trans_to_trasnformation_matrix
 from opencood.utils.transformation_utils import inf_side_rot_and_trans_to_trasnformation_matrix
+from scipy import stats
 
 def load_json(path):
     with open(path, mode="r") as f:
@@ -88,6 +89,11 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
             self.binomial_p = params['binomial_p']
         else:
             self.binomial_p = 0
+
+        self.strict_data = False
+        if 'strict_data' in params and params['strict_data'] is True:
+            print("===验证集使用严格策略, 即必须10*k历史帧严格存在===")
+            self.strict_data = True
 
         # 控制是否需要生成GT flow
         self.is_generate_gt_flow = False
@@ -168,6 +174,24 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
             True means there is a corresponding road-side frame.
         """
         # print('veh_frame_id: ',veh_frame_id,'\n')
+        if self.strict_data is not True:
+            frame_info = {}
+            
+            frame_info = self.co_idx2info[veh_frame_id] # 取出协同信息
+            inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "") # 当前路端的帧id
+            cur_inf_info = self.inf_idx2info[inf_frame_id] # 取出路端信息
+            delay_id = id_to_str(int(inf_frame_id) - 0) 
+            if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+                return False
+            # if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])): # 当前帧作为cur，往前倒推10*2帧，检查是否合法
+            #     return False
+            # for i in range(self.binomial_n * self.k): # 循环10 * 2 次 也就是从cur id往前倒推，必须每一帧都存在
+            #     delay_id = id_to_str(int(inf_frame_id) - i) 
+            #     if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+            #         return False
+
+            return True
+
         frame_info = {}
         
         frame_info = self.co_idx2info[veh_frame_id]
@@ -199,6 +223,8 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
         # veh_frame_id = self.split_info[idx]
         veh_frame_id = self.data[idx]
         frame_info = self.co_data[veh_frame_id]
+        bernoulliDist = stats.bernoulli(self.binomial_p)
+
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()
 
@@ -220,6 +246,21 @@ class LateFusionDatasetDAIR(late_fusion_dataset.LateFusionDataset):
 
         data[1]['params'] = OrderedDict()
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        trails = bernoulliDist.rvs(self.binomial_n)
+        sample_interval = sum(trails) # 向前倒推多少帧
+        inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
+
+        if self.strict_data is not True:
+            cur_inf_info = self.inf_idx2info[inf_frame_id] # 取出路端信息 要判断两个：1、延迟减去后的帧是否存在，否为无延迟，2、延迟减去后的帧是否有车路帧，如果没有则倒退
+            if (int(inf_frame_id) - sample_interval < int(cur_inf_info["batch_start_id"])): # 如果往前已经没有帧，则默认使用当前帧 ，设置延迟为0
+                sample_interval = 0
+            if sample_interval > 0:
+                delay_id = id_to_str(int(inf_frame_id) - sample_interval)
+                for _ in range(sample_interval): # 判断延迟帧是否有车路帧，无则回溯
+                    if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+                        sample_interval -= 1
+                    else:
+                        break
 
         data[1]['params']['vehicles'] = load_json(os.path.join(self.root_dir, 'infrastructure-side/label/virtuallidar/',inf_frame_id + '.json'))
         virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))

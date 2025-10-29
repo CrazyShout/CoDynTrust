@@ -41,18 +41,47 @@ def generate_flow_map_and_mask(flow, bbox_list, scale=1.25, shape_list=None, ali
     # flow = torch.tensor([70, 0]).unsqueeze(0).to(feature)
 
     # only use x and y
-    bbox_list = bbox_list[:, :, :2]
+    bbox_list = bbox_list[:, :, :2] # (n_common, 4, 2)
 
     # scale meters to voxel, feature_length / lidar_range_length = 1.25
-    flow = flow * scale
-    bbox_list = bbox_list * scale
+    flow = flow * scale # (n_common, 2)
+    bbox_list = bbox_list * scale # 用于将米制单位转换为体素（voxel）单位，便于将实际距离映射到图像或体积数据的尺度上。
 
-    C, H, W = shape_list
+    C, H, W = shape_list # (64, 200, 704)
     num_cav = bbox_list.shape[0]
     basic_mat = torch.tensor([[1,0,0],[0,1,0]]).unsqueeze(0).to(torch.float32)
-    basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=align_corners).to(shape_list.device)
+    basic_warp_mat = F.affine_grid(basic_mat, [1, C, H, W], align_corners=align_corners).to(shape_list.device) # (1, H, W, 2)
     reserved_area = torch.zeros((C, H, W)).to(shape_list.device)  # C, H, W
-    if flow.shape[0] == 0 or flow.max() == 0: 
+    # if flow.shape[0] == 0 or flow.max() == 0: # 第一个是判断是不是根本没有匹配上的object，第二是看流速是否为0，也就是适应0延迟的情况
+    if flow.shape[0] == 0: # 修改判断条件，无延迟的时候也去算一下reserved_area
+        # if flow.numel() > 0 and flow.max() == 0:
+        #     flowed_bbx_list = bbox_list  # n, 4, 2 这是将流速加在了object上 注意，这里的object是past0的 
+        #     x_min = torch.min(flowed_bbx_list[:,:,0],dim=1)[0] - 1 # 扩大一点bbx的范围，（n_common, 1）
+        #     x_max = torch.max(flowed_bbx_list[:,:,0],dim=1)[0] + 1
+        #     y_min = torch.min(flowed_bbx_list[:,:,1],dim=1)[0] - 1
+        #     y_max = torch.max(flowed_bbx_list[:,:,1],dim=1)[0] + 1
+        #     x_min_fid = (x_min + int(W/2)).to(torch.int) # 转移坐标原点为左上角
+        #     x_max_fid = (x_max + int(W/2)).to(torch.int)
+        #     y_min_fid = (y_min + int(H/2)).to(torch.int)
+        #     y_max_fid = (y_max + int(H/2)).to(torch.int)
+
+        #     # generate mask
+        #     x_min_ori = torch.min(bbox_list[:,:,0],dim=1)[0] # 这是past0的obejct xmin （n_common, 1）
+        #     x_max_ori = torch.max(bbox_list[:,:,0],dim=1)[0]
+        #     y_min_ori = torch.min(bbox_list[:,:,1],dim=1)[0]
+        #     y_max_ori = torch.max(bbox_list[:,:,1],dim=1)[0]
+        #     x_min_fid_ori = (x_min_ori + int(W/2)).to(torch.int)
+        #     x_max_fid_ori = (x_max_ori + int(W/2)).to(torch.int)
+        #     y_min_fid_ori = (y_min_ori + int(H/2)).to(torch.int)
+        #     y_max_fid_ori = (y_max_ori + int(H/2)).to(torch.int)
+        #     # set original location as 0
+        #     for cav in range(num_cav):
+        #         reserved_area[:,y_min_fid_ori[cav]:y_max_fid_ori[cav],x_min_fid_ori[cav]:x_max_fid_ori[cav]] = 0 # （C， H， W） past0中所在的区域变为0
+        #     # set warped location as 1
+        #     for cav in range(num_cav):
+        #         reserved_area[:,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = 1 # （C， H， W） 经过flow平移过的object所在的区域变为1
+        #     return basic_warp_mat,  reserved_area.unsqueeze(0)  # 返回不变的矩阵
+
         reserved_area = torch.ones((C, H, W)).to(shape_list.device)  # C, H, W
         return basic_warp_mat,  reserved_area.unsqueeze(0)  # 返回不变的矩阵
 
@@ -64,36 +93,36 @@ def generate_flow_map_and_mask(flow, bbox_list, scale=1.25, shape_list=None, ali
     0  0    1 
     ------------
     '''
-    flow_clone = flow.clone()
+    flow_clone = flow.clone() # (n_common, 2)其实就是两帧之间object的x和y的差值diff
 
-    affine_matrices = torch.eye(3).unsqueeze(0).repeat(flow.shape[0], 1, 1)
-    flow_clone = -2 * flow_clone / torch.tensor([W, H]).to(torch.float32).to(shape_list.device)
+    affine_matrices = torch.eye(3).unsqueeze(0).repeat(flow.shape[0], 1, 1) # (n_common, 3, 3)
+    flow_clone = -2 * flow_clone / torch.tensor([W, H]).to(torch.float32).to(shape_list.device) # 这应该是在将flow约束成比例的形式，方便affine_grid的输入要求 平移的两个参数在grid中指的是比例，这是为了兼容多种尺寸的图
     # flow_clone = flow_clone[:, [1, 0]]
     affine_matrices[:, :2, 2] = flow_clone 
     
-    cav_t_mat = affine_matrices[:, :2, :]   # n, 2, 3
+    cav_t_mat = affine_matrices[:, :2, :]   # n, 2, 3 记录了每一个object的平移情况
     # print("cav_t_mat", cav_t_mat)
 
-    cav_warp_mat = F.affine_grid(cav_t_mat,
+    cav_warp_mat = F.affine_grid(cav_t_mat, # 构造了一个仿射变换，其中不能缩放，但可以平移，记录了flow中的蕴含的平移数据
                         [num_cav, C, H, W],
-                        align_corners=align_corners).to(shape_list.device) # .to() 统一数据格式 float32
+                        align_corners=align_corners).to(shape_list.device) # .to() 统一数据格式 float32  形成一个（n_common, H, W, 2）
     
-    flowed_bbx_list = bbox_list + flow.unsqueeze(1).repeat(1,4,1)  # n, 4, 2
+    flowed_bbx_list = bbox_list + flow.unsqueeze(1).repeat(1,4,1)  # n, 4, 2 这是将流速加在了object上 注意，这里的object是past0的 
 
-    x_min = torch.min(flowed_bbx_list[:,:,0],dim=1)[0] - 1
+    x_min = torch.min(flowed_bbx_list[:,:,0],dim=1)[0] - 1 # 扩大一点bbx的范围，（n_common, 1）  这个是补偿过的结果
     x_max = torch.max(flowed_bbx_list[:,:,0],dim=1)[0] + 1
     y_min = torch.min(flowed_bbx_list[:,:,1],dim=1)[0] - 1
     y_max = torch.max(flowed_bbx_list[:,:,1],dim=1)[0] + 1
-    x_min_fid = (x_min + int(W/2)).to(torch.int)
+    x_min_fid = (x_min + int(W/2)).to(torch.int) # 转移坐标原点为左上角
     x_max_fid = (x_max + int(W/2)).to(torch.int)
     y_min_fid = (y_min + int(H/2)).to(torch.int)
     y_max_fid = (y_max + int(H/2)).to(torch.int)
-
-    for cav in range(num_cav):
+    # 注意： 以下是用已经flow平移过的索引来替换坐标变换内容
+    for cav in range(num_cav): # 将所有object的cav_warp_mat的部分全部copy到basic_warp_mat对应部分，这样其他部分仍旧保持不变，只有object部分发生变化，这一步是将n_common个平移变换放到一个坐标变换当中
         basic_warp_mat[0,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = cav_warp_mat[cav,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]]
 
     # generate mask
-    x_min_ori = torch.min(bbox_list[:,:,0],dim=1)[0]
+    x_min_ori = torch.min(bbox_list[:,:,0],dim=1)[0] # 这是past0的obejct xmin （n_common, 1） 这个是没有补偿过的object
     x_max_ori = torch.max(bbox_list[:,:,0],dim=1)[0]
     y_min_ori = torch.min(bbox_list[:,:,1],dim=1)[0]
     y_max_ori = torch.max(bbox_list[:,:,1],dim=1)[0]
@@ -103,47 +132,88 @@ def generate_flow_map_and_mask(flow, bbox_list, scale=1.25, shape_list=None, ali
     y_max_fid_ori = (y_max_ori + int(H/2)).to(torch.int)
     # set original location as 0
     for cav in range(num_cav):
-        reserved_area[:,y_min_fid_ori[cav]:y_max_fid_ori[cav],x_min_fid_ori[cav]:x_max_fid_ori[cav]] = 0
+        reserved_area[:,y_min_fid_ori[cav]:y_max_fid_ori[cav],x_min_fid_ori[cav]:x_max_fid_ori[cav]] = 0 # （C， H， W） past0所在的区域变为0
     # set warped location as 1
     for cav in range(num_cav):
-        reserved_area[:,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = 1
+        reserved_area[:,y_min_fid[cav]:y_max_fid[cav],x_min_fid[cav]:x_max_fid[cav]] = 1 # （C， H， W） 经过flow平移过的object所在的区域变为1
 
-    return basic_warp_mat, reserved_area.unsqueeze(0)
+    return basic_warp_mat, reserved_area.unsqueeze(0) # （1， H， W，2） （1， C， H， W）
 
 def find_id_difference(obj_A, obj_B, id_A, id_B):
     """
     返回两个tensor对应id行的差值
-    :param obj_A: 输入的tensor A 大小为 (N_0, 7)
-    :param obj_B: 输入的tensor B 大小为 (N_1, 7)
+    :param obj_A: 输入的tensor A 大小为 (100, 7)
+    :param obj_B: 输入的tensor B 大小为 (100, 7)
     :param id_A: tensor A中每一行的id 长度为N_0 list类型
     :param id_B: tensor B中每一行的id 长度为N_1 list类型
     :return diff: 两个tensor对应id行的差值 大小为 (N, 3)
     :return A_common: obj_A中对应common_id行的tensor 大小为 (N, 7)
     """
     # 将id_A, id_B转化为字典
-    dict_A = dict(zip(id_A, range(len(id_A))))
+    dict_A = dict(zip(id_A, range(len(id_A)))) # 构建成字典 即每一个bbx对应一个id 比如 4425：0 表示车id为4425在objA中的索引为0
     dict_B = dict(zip(id_B, range(len(id_B))))
 
     # 找到A和B的共有id
-    common_id = set(dict_A.keys()) & set(dict_B.keys())
+    common_id = set(dict_A.keys()) & set(dict_B.keys()) # 两个tensor中共有的cav id 形如{4025， 6244， ...}
 
     # 生成对应id的tensor索引
     index_A = torch.tensor([dict_A[id] for id in common_id], dtype=torch.long)
     index_B = torch.tensor([dict_B[id] for id in common_id], dtype=torch.long)
 
     # 取出对应id的tensor行
-    A_common = obj_A[index_A, :]
+    A_common = obj_A[index_A, :] # （n_common, 7）
     B_common = obj_B[index_B, :]
 
     # 计算差值
     try:
-        diff = B_common[:, :2] - A_common[:, :2]
+        diff = B_common[:, :2] - A_common[:, :2] # x, y 的差值 （n_common, 2）
     except IndexError:
         B_common = np.expand_dims(B_common, axis=0)
         A_common = np.expand_dims(A_common, axis=0)
         diff = B_common[:, :2] - A_common[:, :2]
 
     return diff, A_common
+
+def generate_flow_map_yjxu(object_stack, object_id_stack, cav_lidar_range, voxel_size, shape_list = torch.tensor([64, 200, 704]), past_k=1):
+    '''
+    SizheWei@2023/04/20 
+    Generate GT flow map for a single agent.
+    Args:
+        timestamp: 0, 1, 2, the timestamps between previous and current
+        object_stack: Dict {timestamp: objects} objects/boxes at each timestamp
+        object_id_stack: Dict {timestamp: object_ids} objects/boxes ids at each timestamp
+        past_k: the time stamps between previous and current timestamp
+    Output:
+        bev_flow: np.array [2,H,W]
+    '''
+    C, H, W = shape_list
+
+    past0_box = object_stack[0] # （max_num, 7）
+    curr_box = object_stack[1]
+    past0_id = object_id_stack[0] # 数组 每一个bbx的id unique
+    curr_id = object_id_stack[1]
+    flow, selected_box_3dcenter_past0 = find_id_difference(past0_box, curr_box, past0_id, curr_id) # 第一个为x y差值 第二个为（n_common, 7）两者共同的object
+
+    selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl') # （n_common, 4, 3）
+
+    flow = torch.from_numpy(flow).to(torch.float32)
+    selected_box_3dcorner_past0 = torch.from_numpy(selected_box_3dcorner_past0).to(torch.float32)
+    flow_map, mask = generate_flow_map_and_mask(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list) # （1， H， W，2） （1， C， H， W）
+
+    # #######################
+    # flow_map = flow_map.squeeze(0).permute(2, 0, 1) #(2, H, W)
+    # denorm_flow = flow_map.clone()
+    # denorm_flow[0, :, :] = (denorm_flow[0, :, :] + 1.0) * (W / 2.0)
+    # denorm_flow[1, :, :] = (denorm_flow[1, :, :] + 1.0) * (H / 2.0)
+    # x_coord = torch.arange(W).float()   # [0, ..., W]
+    # y_coord = torch.arange(H).float()   # [0, ..., H]
+    # y, x = torch.meshgrid(y_coord, x_coord)  # [H, W], [H, W]
+    # grid = torch.cat([x.unsqueeze(0), y.unsqueeze(0)], dim=0) # [2, H, W]
+    # final_flow = denorm_flow - grid
+    # final_flow = final_flow.numpy()
+    # #######################
+
+    return flow_map, mask
 
 def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxel_size, shape_list = torch.tensor([64, 200, 704]), past_k=1):
     '''
@@ -159,17 +229,17 @@ def generate_flow_map_szwei(object_stack, object_id_stack, cav_lidar_range, voxe
     '''
     C, H, W = shape_list
 
-    past0_box = object_stack[0]
+    past0_box = object_stack[0] # （max_num, 7） 
     curr_box = object_stack[1]
-    past0_id = object_id_stack[0]
+    past0_id = object_id_stack[0] # 数组 每一个bbx的id unique
     curr_id = object_id_stack[1]
-    flow, selected_box_3dcenter_past0 = find_id_difference(past0_box, curr_box, past0_id, curr_id)
+    flow, selected_box_3dcenter_past0 = find_id_difference(past0_box, curr_box, past0_id, curr_id) # 第一个为（n_common, 2）x y差值 第二个为（n_common, 7）两者共同的object  延迟为0的时候 第一个全是0
 
-    selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl')
+    selected_box_3dcorner_past0 = box_utils.boxes_to_corners2d(selected_box_3dcenter_past0, order='hwl') # （n_common, 4, 3）
 
     flow = torch.from_numpy(flow).to(torch.float32)
     selected_box_3dcorner_past0 = torch.from_numpy(selected_box_3dcorner_past0).to(torch.float32)
-    flow_map, mask = generate_flow_map_and_mask(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list)
+    flow_map, mask = generate_flow_map_and_mask(flow, selected_box_3dcorner_past0, scale=2.5, shape_list=shape_list) # （1， H， W，2） （1， C， H， W）
 
     # #######################
     # flow_map = flow_map.squeeze(0).permute(2, 0, 1) #(2, H, W)

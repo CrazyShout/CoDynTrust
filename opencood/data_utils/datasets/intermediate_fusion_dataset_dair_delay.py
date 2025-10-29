@@ -32,6 +32,7 @@ from opencood.utils.transformation_utils import veh_side_rot_and_trans_to_trasnf
 from opencood.utils.transformation_utils import inf_side_rot_and_trans_to_trasnformation_matrix
 from opencood.utils.transformation_utils import x_to_world
 from opencood.utils.pose_utils import add_noise_data_dict
+from scipy import stats
 
 def load_json(path):
     with open(path, mode="r") as f:
@@ -56,6 +57,14 @@ def build_idx_to_co_info(data):
         idx2info[idx] = elem
     return idx2info
 
+def build_inf_fid_to_veh_fid(data):
+    inf_fid2veh_fid = {}
+    for elem in data:
+        veh_fid = elem["vehicle_pointcloud_path"].split("/")[-1].rstrip('.pcd')
+        inf_fid = elem["infrastructure_pointcloud_path"].split("/")[-1].rstrip('.pcd')
+        inf_fid2veh_fid[inf_fid] = veh_fid
+    return inf_fid2veh_fid
+
 def id_to_str(id, digits=6):
     result = ""
     for i in range(digits):
@@ -77,8 +86,26 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         self.data_augmentor = DataAugmentor(params['data_augment'],
                                             train)
         self.max_cav = 2
-        self.k = params['time_delay']
-        
+        if 'num_sweep_frames' in params:    # number of frames we use in LSTM
+            self.k = params['num_sweep_frames']
+        else:
+            self.k = 1
+
+        if 'binomial_n' in params:
+            self.binomial_n = params['binomial_n']
+        else:
+            self.binomial_n = 10
+
+        if 'binomial_p' in params:
+            self.binomial_p = params['binomial_p']
+        else:
+            self.binomial_p = 0
+
+        self.strict_data = False
+        if 'strict_data' in params and params['strict_data'] is True:
+            print("===验证集使用严格策略, 即必须10*k历史帧严格存在===")
+            self.strict_data = True
+
         # if project first, cav's lidar will first be projected to
         # the ego's coordinate frame. otherwise, the feature will be
         # projected instead.
@@ -126,21 +153,22 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         else:
             split_dir = params['validate_dir']
 
-        self.root_dir = '/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure' # TODO:
+        self.root_dir = params['data_dir']
         self.inf_idx2info = build_idx_to_info(
             load_json(osp.join(self.root_dir, "infrastructure-side/data_info.json"))
         )
         self.co_idx2info = build_idx_to_co_info(
             load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
         )
-
+        self.inf_fid2veh_fid = build_inf_fid_to_veh_fid(load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
+        )
         self.data_split = load_json(split_dir)
         self.data = []
         for veh_idx in self.data_split:
             if self.is_valid_id(veh_idx):
                 self.data.append(veh_idx)
 
-        print("ASync dataset with {} time delay initialized! {} samples totally!".format(self.k, len(self.data)))
+        print("ASync dataset with {} time delay initialized! {} samples totally!".format(self.binomial_n*self.binomial_p, len(self.data)))
     
     def is_valid_id(self, veh_frame_id):
         """
@@ -157,19 +185,50 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         bool valud
             True means there is a corresponding road-side frame.
         """
-        # print('veh_frame_id: ',veh_frame_id,'\n')
+        if self.strict_data is not True:
+            frame_info = {}
+            
+            frame_info = self.co_idx2info[veh_frame_id] # 取出协同信息
+            inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "") # 当前路端的帧id
+            cur_inf_info = self.inf_idx2info[inf_frame_id] # 取出路端信息
+            delay_id = id_to_str(int(inf_frame_id) - 0) 
+            if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+                return False
+            # if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])): # 当前帧作为cur，往前倒推10*2帧，检查是否合法
+            #     return False
+            # for i in range(self.binomial_n * self.k): # 循环10 * 2 次 也就是从cur id往前倒推，必须每一帧都存在
+            #     delay_id = id_to_str(int(inf_frame_id) - i) 
+            #     if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+            #         return False
+
+            return True
         frame_info = {}
         
-        frame_info = self.co_idx2info[veh_frame_id]
-        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
-        cur_inf_info = self.inf_idx2info[inf_frame_id]
-        if (
-            int(inf_frame_id) - self.k < int(cur_inf_info["batch_start_id"])
-            or id_to_str(int(inf_frame_id) - self.k) not in self.inf_idx2info
-        ):
+        frame_info = self.co_idx2info[veh_frame_id] # 取出协同信息
+        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "") # 当前路端的帧id
+        cur_inf_info = self.inf_idx2info[inf_frame_id] # 取出路端信息
+        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])): # 当前帧作为cur，往前倒推10*2帧，检查是否合法
             return False
+        for i in range(self.binomial_n * self.k): # 循环10 * 2 次 也就是从cur id往前倒推，必须每一帧都存在
+            delay_id = id_to_str(int(inf_frame_id) - i) 
+            if delay_id not in self.inf_fid2veh_fid.keys():
+                return False
 
         return True
+    
+        # # print('veh_frame_id: ',veh_frame_id,'\n')
+        # frame_info = {}
+        
+        # frame_info = self.co_idx2info[veh_frame_id]
+        # inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        # cur_inf_info = self.inf_idx2info[inf_frame_id]
+        # if (
+        #     int(inf_frame_id) - self.k < int(cur_inf_info["batch_start_id"])
+        #     or id_to_str(int(inf_frame_id) - self.k) not in self.inf_idx2info
+        # ):
+        #     return False
+
+        # return True
 
     def retrieve_base_data(self, idx):
         """
@@ -192,10 +251,27 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
         frame_info = {}
         system_error_offset = {}
         
+        bernoulliDist = stats.bernoulli(self.binomial_p)
+        trails = bernoulliDist.rvs(self.binomial_n)
+        sample_interval = sum(trails)
+
         frame_info = self.co_idx2info[veh_frame_id]
         inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        # cur_inf_frame_id = inf_frame_id
 
-        inf_frame_id = id_to_str(int(inf_frame_id) - self.k)
+        if self.strict_data is not True:
+            cur_inf_info = self.inf_idx2info[inf_frame_id] # 取出路端信息 要判断两个：1、延迟减去后的帧是否存在，否为无延迟，2、延迟减去后的帧是否有车路帧，如果没有则倒退
+            if (int(inf_frame_id) - sample_interval < int(cur_inf_info["batch_start_id"])): # 如果往前已经没有帧，则默认使用当前帧 ，设置延迟为0
+                sample_interval = 0
+            if sample_interval > 0:
+                delay_id = id_to_str(int(inf_frame_id) - sample_interval)
+                for _ in range(sample_interval): # 判断延迟帧是否有车路帧，无则回溯
+                    if delay_id not in self.inf_fid2veh_fid.keys(): # 必须有车路对应
+                        sample_interval -= 1
+                    else:
+                        break
+
+        inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
 
         system_error_offset = frame_info["system_error_offset"]
         data = OrderedDict()
@@ -234,6 +310,20 @@ class IntermediateFusionDatasetDAIRAsync(intermediate_fusion_dataset.Intermediat
             'infrastructure-side', cur_inf_info['pointcloud_path']))
         data[0]['veh_frame_id'] = veh_frame_id
         data[1]['veh_frame_id'] = inf_frame_id
+
+        # 修正世界标签使用，不能使用延迟前的标签，应该用当前时间的标签 2024年7月19日 by xuyunjiang
+        # 不需要了，因为世界标签由车端读取了
+        # data[1]['curr'] = {}
+        # data[1]['curr']['params'] = OrderedDict()
+        # data[1]['curr']['params']['vehicles'] = []
+        # virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(cur_inf_frame_id)+'.json'))
+        # transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
+        # data[1]['curr']['params']['lidar_pose'] = tfm_to_pose(transformation_matrix1)
+        # real_cur_inf_info = self.inf_idx2info[cur_inf_frame_id]
+        # data[1]['curr']['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir, \
+        #     'infrastructure-side', real_cur_inf_info['pointcloud_path']))
+        # data[1]['curr']['veh_frame_id'] = cur_inf_frame_id
+
         return data
 
     def __getitem__(self, idx):

@@ -264,7 +264,7 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
             params['postprocess'],
             train)
 
-        self.anchor_box = self.post_processor.generate_anchor_box()
+        self.anchor_box = self.post_processor.generate_anchor_box() # 返回预设置的锚框
 
         print("=== OPV2V-Irregular Multi-sweep dataset with non-ego cavs' past {} frames collected initialized! Expectation of sample interval is {}. ### {} ###  samples totally! ===".format(self.k, self.binomial_n * self.binomial_p, self.len_record[-1]))
 
@@ -987,19 +987,19 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
         selected_cav_processed = {}
 
         # curr lidar feature
-        lidar_np = selected_cav_base['curr']['lidar_np']
+        lidar_np = selected_cav_base['curr']['lidar_np'] # 当前的点云信息
         lidar_np = shuffle_points(lidar_np)
         lidar_np = mask_ego_points(lidar_np) # remove points that hit itself
 
         if self.visualize:
             # trans matrix
             transformation_matrix = \
-                x1_to_x2(selected_cav_base['curr']['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray
+                x1_to_x2(selected_cav_base['curr']['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray  cav到ego的转换矩阵
             projected_lidar = \
                 box_utils.project_points_by_matrix_torch(lidar_np[:, :3], transformation_matrix)
             selected_cav_processed.update({'projected_lidar': projected_lidar})
 
-        lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range'])
+        lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range']) # 剔除雷达范围意外
         if self.viz_bbx_flag:
             selected_cav_processed.update({'single_lidar': lidar_np[:, :3]})
         curr_feature = self.pre_processor.preprocess(lidar_np)
@@ -1028,14 +1028,14 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
         if_no_point = False
 
         # past k frames [trans matrix], [lidar feature], [pose], [time interval]
-        for i in range(self.k):
+        for i in range(self.k): # 遍历k帧
             # 1. trans matrix
             transformation_matrix = \
-                x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray
+                x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], ego_pose) # T_ego_cav, np.ndarray 求得这一帧的cav pose 到ego的转换矩阵
             past_k_tr_mats.append(transformation_matrix)
             # past_k trans past_0 matrix
             pastk_2_past0 = \
-                x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], selected_cav_base['past_k'][0]['params']['lidar_pose'])
+                x1_to_x2(selected_cav_base['past_k'][i]['params']['lidar_pose'], selected_cav_base['past_k'][0]['params']['lidar_pose']) # 求这一帧到第0帧的转换矩阵
             pastk_2_past0_tr_mats.append(pastk_2_past0)
             
             # 2. lidar feature
@@ -1045,7 +1045,7 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
             lidar_np = mask_points_by_range(lidar_np, self.params['preprocess']['cav_lidar_range'])
             if self.viz_bbx_flag:
                 selected_cav_processed.update({'single_past_lidar': lidar_np[:, :3]})
-            processed_features = self.pre_processor.preprocess(lidar_np)
+            processed_features = self.pre_processor.preprocess(lidar_np) # 预处理点云 也即体素化 
             past_k_features.append(processed_features)
 
             if lidar_np.shape[0] == 0: # 没有点留下
@@ -1091,13 +1091,13 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
         # curr label at single view
         # opencood/data_utils/post_processor/base_postprocessor.py
         single_object_bbx_center, single_object_bbx_mask, single_object_ids = \
-            self.generate_object_center([selected_cav_base['curr']], selected_cav_base['curr']['params']['lidar_pose'])  
+            self.generate_object_center([selected_cav_base['curr']], selected_cav_base['curr']['params']['lidar_pose'])  # 生成bbx，投影到current ego位置
         # generate the anchor boxes
         # opencood/data_utils/post_processor/voxel_postprocessor.py
         anchor_box = self.anchor_box
         label_dict = self.post_processor.generate_label(
                 gt_box_center=single_object_bbx_center, anchors=anchor_box, mask=single_object_bbx_mask
-            )
+            ) # 这是用来train 检测器的
         
         # curr label at ego view
         object_bbx_center, object_bbx_mask, object_ids = \
@@ -1127,18 +1127,18 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
             # generate flow, from past_0 and curr
             prev_object_id_stack = {}
             prev_object_stack = {}
-            for t_i in range(2):
+            for t_i in range(2): # 遍历两次 过去一帧和当前帧 第一次为过去一帧， 第二次为当前帧
                 split_part = selected_cav_base['past_k'][0] if t_i == 0 else selected_cav_base['curr'] # TODO: 这里面的 prev 和 curr 可能反了
                 object_bbx_center, object_bbx_mask, object_ids = \
                     self.generate_object_center([split_part], selected_cav_base['past_k'][0]['params']['lidar_pose'])
                 prev_object_id_stack[t_i] = object_ids
-                prev_object_stack[t_i] = object_bbx_center
+                prev_object_stack[t_i] = object_bbx_center # （max_num, 7）
             
             for t_i in range(2):
-                unique_object_ids = list(set(prev_object_id_stack[t_i]))
+                unique_object_ids = list(set(prev_object_id_stack[t_i])) # 去重
                 unique_indices = \
-                    [prev_object_id_stack[t_i].index(x) for x in unique_object_ids]
-                prev_object_stack[t_i] = np.vstack(prev_object_stack[t_i])
+                    [prev_object_id_stack[t_i].index(x) for x in unique_object_ids] # 独立的cav id 的索引
+                prev_object_stack[t_i] = np.vstack(prev_object_stack[t_i]) # 竖直堆叠
                 prev_object_stack[t_i] = prev_object_stack[t_i][unique_indices]
                 prev_object_id_stack[t_i] = unique_object_ids
             
@@ -1149,8 +1149,8 @@ class IntermediateFusionDatasetV2XSETFlowNew(basedataset.BaseDataset):
                                             self.params['preprocess']['args']['voxel_size'],
                                             past_k=1)
 
-            selected_cav_processed.update({'flow_gt': flow_map})
-            selected_cav_processed.update({'warp_mask': warp_mask})
+            selected_cav_processed.update({'flow_gt': flow_map})  # (1, H, W, 2) 坐标网格 记录past0到cur的变换
+            selected_cav_processed.update({'warp_mask': warp_mask}) # （1， C， H，W）0/1张量，标记变换后的object所在的区域
 
         return selected_cav_processed
 

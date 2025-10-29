@@ -664,7 +664,7 @@ class IntermediateFusionDatasetMultisweep(basedataset.BaseDataset):
 
             # 4. time interval
             if selected_cav_base['ego']:
-                past_k_time_diffs.append(-i)
+                past_k_time_diffs.append(-i) # i帧
             else:
                 past_k_time_diffs.append(-(self.tau+i))
 

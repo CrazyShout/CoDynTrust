@@ -17,6 +17,7 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_v2x import Inte
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2_dair import IntermediateFusionDatasetV2DAIR
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_delay import IntermediateFusionDatasetDAIRAsync
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular import IntermediateFusionDatasetDAIRIrregular
+from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular_flow import IntermediateFusionDatasetDAIRIrregularFlow
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_multisweep import IntermediateFusionDatasetDAIRMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_multisweep import IntermediateFusionDatasetMultisweep
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular import IntermediateFusionDatasetIrregular
@@ -30,11 +31,13 @@ from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_si
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_new import IntermediateFusionDatasetIrregularFlowNew
 from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_irregular_flow_variance import IntermediateFusionDatasetIrregularFlowVariance
 from opencood.data_utils.datasets.intermediate_fusion_dataset_dair_irregular_multi import IntermediateFusionDatasetDAIRIrregularMulti
-from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_outage import IntermediateFusionDataset_outage
+# from opencood.data_utils.datasets.intermediate_fusion_dataset_opv2v_outage import IntermediateFusionDataset_outage
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_irregular_flow_new import IntermediateFusionDatasetV2XSETFlowNew
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_compensation import IntermediateFusionDatasetV2XSETCompensation
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset import IntermediateFusionDatasetV2XSET
 from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_singleframe import IntermediateFusionDatasetV2XSETSingleframe
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_irregular_flow_xyj import IntermediateFusionDatasetV2XSETFlowXYJ
+from opencood.data_utils.datasets.intermediate_fusion_dataset_v2xset_regular_flow_xyj import IntermediateFusionDatasetV2XSETFlowXYJNew
 
 __all__ = {
     'LateFusionDataset': LateFusionDataset,
@@ -62,24 +65,30 @@ __all__ = {
     'IntermediateFusionDatasetIrregularSingleframe': IntermediateFusionDatasetIrregularSingleframe,
     'IntermediateFusionDatasetIrregularFlowNew': IntermediateFusionDatasetIrregularFlowNew,
     'IntermediateFusionDatasetDAIRIrregular': IntermediateFusionDatasetDAIRIrregular,
+    'IntermediateFusionDatasetDAIRIrregularFlow': IntermediateFusionDatasetDAIRIrregularFlow, # 使用这个
     'IntermediateFusionDatasetDAIRIrregularMulti': IntermediateFusionDatasetDAIRIrregularMulti,
     'IntermediateFusionDatasetIrregularFlowVariance': IntermediateFusionDatasetIrregularFlowVariance,
-    'IntermediateFusionDataset_outage': IntermediateFusionDataset_outage,
+    # 'IntermediateFusionDataset_outage': IntermediateFusionDataset_outage,
     'IntermediateFusionDatasetV2XSETFlowNew': IntermediateFusionDatasetV2XSETFlowNew,
+    
+    'IntermediateFusionDatasetV2XSETFlowXYJ': IntermediateFusionDatasetV2XSETFlowXYJ,
+    'IntermediateFusionDatasetV2XSETFlowXYJNew': IntermediateFusionDatasetV2XSETFlowXYJNew,
+
     'IntermediateFusionDatasetV2XSETCompensation': IntermediateFusionDatasetV2XSETCompensation,
     'IntermediateFusionDatasetV2XSET': IntermediateFusionDatasetV2XSET,
     'IntermediateFusionDatasetV2XSETSingleframe': IntermediateFusionDatasetV2XSETSingleframe
 }
 
 # the final range for evaluation
-GT_RANGE_OPV2V = [-140, -40, -3, 140, 40, 1] #[-140, -40, -3, 140, 40, 1], [-153.6, -51.2, -3, 153.6, 51.2, 1] [-140.8, -38.4, -3, 140.8, 38.4, 1]
+# GT_RANGE_OPV2V = [-140, -40, -3, 140, 40, 1] #[-140, -40, -3, 140, 40, 1], [-153.6, -51.2, -3, 153.6, 51.2, 1] [-140.8, -38.4, -3, 140.8, 38.4, 1]
+GT_RANGE_OPV2V = [-140.8, -40, -3, 140.8, 40, 1] #[-140, -40, -3, 140, 40, 1], [-153.6, -51.2, -3, 153.6, 51.2, 1] [-140.8, -38.4, -3, 140.8, 38.4, 1]
 GT_RANGE_V2XSIM = [-32, -32, -3, 32, 32, 1]
 # The communication range for cavs
 COM_RANGE = 70
 
 
 def build_dataset(dataset_cfg, visualize=False, train=True):
-    dataset_name = dataset_cfg['fusion']['core_method']
+    dataset_name = dataset_cfg['fusion']['core_method'] # IntermediateFusionDatasetDAIRIrregular
     error_message = f"{dataset_name} is not found. " \
                     f"Please add your processor file's name in opencood/" \
                     f"data_utils/datasets/init.py"

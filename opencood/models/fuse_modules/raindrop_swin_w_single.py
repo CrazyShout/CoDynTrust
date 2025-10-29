@@ -844,10 +844,10 @@ class raindrop_swin_w_single(nn.Module):
                         nn.init.xavier_uniform_(p)
 
         else:
-            if self.multi_scale:
-                layer_nums = args['layer_nums']
-                num_filters = args['num_filters']
-                self.num_levels = len(layer_nums)
+            if self.multi_scale: # 是否启用多尺度
+                layer_nums = args['layer_nums'] #  [3, 4, 5]
+                num_filters = args['num_filters'] # [64, 128, 256]
+                self.num_levels = len(layer_nums) # 3
                 self.fuse_modules = nn.ModuleList()
                 for idx in range(self.num_levels):
                     if self.agg_mode == 'MAX':
@@ -918,13 +918,13 @@ class raindrop_swin_w_single(nn.Module):
         Parameters
         ----------
         x : torch.Tensor
-            input data, (sum(n_cav), C, H, W)
+            input data, (sum(n_cav), C, H, W) scatter后的特征图
         
         rm : torch.Tensor
-            confidence map, (sum(n_cav), 2, H, W)
+            confidence map, (sum(n_cav), 2, H, W) 置信度图
 
         record_len : list
-            shape: (B)
+            shape: (B)  batch中的车数 如[2, 2]
             
         pairwise_t_matrix : torch.Tensor
             The transformation matrix from each cav to ego, 

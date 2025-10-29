@@ -264,7 +264,7 @@ class PointPillarDirLoss(nn.Module):
 
 
 
-    def logging(self, epoch, batch_id, batch_len, writer = None):
+    def logging(self, epoch, batch_id, batch_len, writer = None, pbar=None, logdir=None, suffix=""):
         """
         Print out  the loss function for current iteration.
 
@@ -284,10 +284,16 @@ class PointPillarDirLoss(nn.Module):
         conf_loss = self.loss_dict['conf_loss']
         dir_loss = self.loss_dict['dir_loss']
 
-        print("[epoch %d][%d/%d], || Loss: %.4f || Conf Loss: %.4f"
+        print_msg = ("[epoch %d][%d/%d], || Loss: %.4f || Conf Loss: %.4f"
               " || Loc Loss: %.4f || Dir Loss: %.4f" % (
                   epoch, batch_id + 1, batch_len,
                   total_loss.item(), conf_loss.item(), reg_loss.item(), dir_loss.item()))
+        
+        if (batch_id + 1) % 10 == 0:
+            with open(logdir, 'a') as file:
+                print(print_msg, file=file)
+        if pbar is not None:                
+            pbar.set_description("[epoch %d][%d/%d]%s, || Loss: %.4f" %(epoch, batch_id + 1, batch_len, suffix, total_loss))
 
         if not writer is None:
             writer.add_scalar('Regression_loss', reg_loss.item(),

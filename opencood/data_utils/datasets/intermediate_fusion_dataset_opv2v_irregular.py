@@ -67,12 +67,19 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         if 'binomial_n' in params:
             self.binomial_n = params['binomial_n']
         else:
-            self.binomial_n = 0
+            self.binomial_n = 10
 
         if 'binomial_p' in params:
             self.binomial_p = params['binomial_p']
         else:
-            self.binomial_p = 1
+            self.binomial_p = 0
+
+        if 'with_history_frames' in params and params['with_history_frames'] is True:
+            print("===需要历史帧===")
+            self.w_history = True
+        else:
+            print("===不需要历史帧===")
+            self.w_history = False
 
         # 控制 past-0 处是否有扰动
         self.is_no_shift = False
@@ -142,9 +149,6 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         for (i, scenario_folder) in enumerate(scenario_folders):
             self.scenario_database.update({i: OrderedDict()})
 
-            # copy timestamps npy file
-            timestamps_file = os.path.join(scenario_folder, 'timestamps.npy')
-            time_annotations = np.load(timestamps_file)
 
             # at least 1 cav should show up
             cav_list = sorted([x 
@@ -152,33 +156,23 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                             os.path.isdir(os.path.join(scenario_folder, x))], key=lambda y:int(y))
             assert len(cav_list) > 0
 
-            # use the frame number as key, the full path as the values
+            # roadside unit data's id is always negative, so here we want to
+            # make sure they will be in the end of the list as they shouldn't
+            # be ego vehicle.
+            if int(cav_list[0]) < 0:
+                cav_list = cav_list[1:] + [cav_list[0]] # 路端放到最后
+
+            # use the frame number as key, the full path as the values, store all json or yaml files in this scenario
             yaml_files = sorted([x
-                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                        for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if # 遍历第一辆车目录下的所有json文件
                         x.endswith(".json")], 
                         key=lambda y:float((y.split('/')[-1]).split('.json')[0]))
             if len(yaml_files)==0:
                 yaml_files = sorted([x 
-                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if
+                            for x in os.listdir(os.path.join(scenario_folder, cav_list[0])) if # 遍历第一辆车目录下的所有yaml文件
                             x.endswith('.yaml')], key=lambda y:float((y.split('/')[-1]).split('.yaml')[0]))
-
-            start_timestamp = int(float(self.extract_timestamps(yaml_files)[0]))
-            while(1):
-                time_id_json = ("%.3f" % float(start_timestamp)) + ".json"
-                time_id_yaml = ("%.3f" % float(start_timestamp)) + ".yaml"
-                if not (time_id_json in yaml_files or time_id_yaml in yaml_files):
-                    start_timestamp += 1
-                else:
-                    break
-
-            end_timestamp = int(float(self.extract_timestamps(yaml_files)[-1]))
-            if start_timestamp%2 == 0:
-                # even
-                end_timestamp = end_timestamp-1 if end_timestamp%2==1 else end_timestamp
-            else:
-                end_timestamp = end_timestamp-1 if end_timestamp%2==0 else end_timestamp
-            num_timestamps = int((end_timestamp - start_timestamp)/2 + 1)
-            regular_timestamps = [start_timestamp+2*i for i in range(num_timestamps)]
+                
+            regular_timestamps = self.extract_timestamps(yaml_files) # 返回的时间戳的列表，如[00068,000070,....] 其中都是字符串
 
             # loop over all CAV data
             for (j, cav_id) in enumerate(cav_list):
@@ -189,16 +183,10 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
 
                 cav_path = os.path.join(scenario_folder, cav_id)
 
-                if j==0: # ego
-                    timestamps = regular_timestamps
-                else:
-                    if self.is_ab_regular:
-                        timestamps = regular_timestamps
-                    else:
-                        timestamps = list(time_annotations[j-1, :])
+                timestamps = regular_timestamps # 场景下的所有时间戳条目
 
                 for timestamp in timestamps:
-                    timestamp = "%.3f" % float(timestamp)
+                    timestamp = "%06d" % int(timestamp) # 字符串格式化，保证6位
                     self.scenario_database[i][cav_id][timestamp] = \
                         OrderedDict()
 
@@ -216,22 +204,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         # camera_files
                 
                 # regular的timestamps 用于做 curr 真实时刻的ground truth
-                self.scenario_database[i][cav_id]['regular'] = OrderedDict()
-                for timestamp in regular_timestamps:
-                    timestamp = "%.3f" % float(timestamp)
-                    self.scenario_database[i][cav_id]['regular'][timestamp] = \
-                        OrderedDict()
-
-                    yaml_file = os.path.join(cav_path,
-                                             timestamp + '.yaml')
-                    lidar_file = os.path.join(cav_path,
-                                              timestamp + '.pcd')
-                    # camera_files = self.load_camera_files(cav_path, timestamp)
-
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['yaml'] = \
-                        yaml_file
-                    self.scenario_database[i][cav_id]['regular'][timestamp]['lidar'] = \
-                        lidar_file
+                self.scenario_database[i][cav_id]['regular'] = self.scenario_database[i][cav_id]
 
                 # Assume all cavs will have the same timestamps length. Thus
                 # we only need to calculate for the first vehicle in the
@@ -361,11 +334,11 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         """
         # we loop the accumulated length list to get the scenario index
         scenario_index = 0
-        for i, ele in enumerate(self.len_record):
+        for i, ele in enumerate(self.len_record): # 遍历一个递增的list [场景1时间戳数，场景1+场景2时间戳数, ...]
             if idx < ele:
                 scenario_index = i
                 break
-        scenario_database = self.scenario_database[scenario_index]
+        scenario_database = self.scenario_database[scenario_index] # 找到对应场景
         
         # 生成冻结分布函数
         bernoulliDist = stats.bernoulli(self.binomial_p) 
@@ -373,11 +346,11 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
         data = OrderedDict()
         # 找到 current 时刻的 timestamp_index 这对于每辆车来讲都一样
         curr_timestamp_idx = idx if scenario_index == 0 else \
-                        idx - self.len_record[scenario_index - 1]
-        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k
-        
+                        idx - self.len_record[scenario_index - 1] # 找到这是场景下的第几个数据 也就是对应时间戳的索引
+        curr_timestamp_idx = curr_timestamp_idx + self.binomial_n * self.k # * 3 # TODO: 往后加了10*3=30帧作为cur帧 其实是因为十次伯努利实验防止都成功 那三帧刚好就要往前跳三十帧
+
         # load files for all CAVs
-        for cav_id, cav_content in scenario_database.items():
+        for cav_id, cav_content in scenario_database.items(): # 遍历一个场景下的所有cav
             '''
             cav_content 
             {
@@ -408,10 +381,10 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             # 2. current frame, for co-perception lable use
             data[cav_id]['curr'] = {}
 
-            timestamp_key = list(cav_content['regular'].items())[curr_timestamp_idx][0]
-            
+            timestamp_key = list(cav_content['regular'].items())[curr_timestamp_idx][0] # 这是找到当前时间戳，字符串  每个列表项是一个键值对，如("000021", OrderedDict())
+
             # 2.1 load curr params
-            # json is faster than yaml
+            # json is faster than yaml 这里是为了加速想使用json 但是目前还没有做json文件
             json_file = cav_content['regular'][timestamp_key]['yaml'].replace("yaml", "json")
             json_file = json_file.replace("OPV2V_irregular_npy", "OPV2V_irregular_npy_updated")
 
@@ -457,7 +430,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 data[cav_id]['curr']['lidar_np'] = np.load(npy_file)
             else:
                 data[cav_id]['curr']['lidar_np'] = \
-                        pcd_utils.pcd_to_np(cav_content['regular'][timestamp_key]['lidar'])
+                        pcd_utils.pcd_to_np(cav_content['regular'][timestamp_key]['lidar']) # （n, 4）
 
             # 2.3 store curr timestamp and time_diff
             data[cav_id]['curr']['timestamp'] = timestamp_key
@@ -468,31 +441,45 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
             data[cav_id]['past_k'] = OrderedDict()
             latest_sample_stamp_idx = curr_timestamp_idx
             # past k frames, pose | lidar | label(for single view confidence map generator use)
-            for i in range(self.k):
+            for i in range(self.k): # 遍历所有帧 以下做出了修改 将ego也作为none-ego的cav处理从而去训练数据
                 # sample_interval
                 if data[cav_id]['ego']:             # ego sample_interval = E(B(n, p))
                     if i == 0: # ego-past-0 与 ego-curr 是一样的
                         data[cav_id]['past_k'][i] = data[cav_id]['curr']
                         continue
-                    sample_interval = self.sample_interval_exp
+                    sample_interval = self.sample_interval_exp # 同样的采样间隔
                     if sample_interval == 0:
                         sample_interval = 1
                 else:                               # non-ego sample_interval ~ B(n, p)
+                    # delay_debug = 6
+                    # if i == 0:
+                    #     sample_interval = 3 #delay_debug
+                    # elif i ==1:
+                    #     sample_interval = 3
+                    #     # sample_set = [2,3]
+                    #     # import random
+                    #     # sample_interval = random.sample(sample_set, 1)[0] #3 #10 - delay_debug
+                    #     # trails = bernoulliDist.rvs(self.binomial_n)
+                    #     # sample_interval = sum(trails)
+                    # else:
+                    #     sample_interval = 3
+                    #     # trails = bernoulliDist.rvs(self.binomial_n)
+                    #     # sample_interval = sum(trails)
                     if self.sample_interval_exp==0 \
                         and self.is_no_shift \
                             and i == 0:
                         data[cav_id]['past_k'][i] = data[cav_id]['curr']
                         continue
-                    if self.is_same_sample_interval:
+                    if self.is_same_sample_interval: # 相同时间间隔采样
                         sample_interval = self.sample_interval_exp
                     else:
                         # B(n, p)
-                        trails = bernoulliDist.rvs(self.binomial_n)
-                        sample_interval = sum(trails)
-                    if sample_interval==0:
+                        trails = bernoulliDist.rvs(self.binomial_n)  # 做10次伯努利实验
+                        sample_interval = sum(trails) # 统计成功次数，作为采样间隔
+                    if sample_interval==0: # 如果采样间隔为0
                         if i==0: # 检查past 0 的实际时间是否在curr 的后面
-                            tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0]
-                            if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0:
+                            tmp_time_key = list(cav_content.items())[latest_sample_stamp_idx][0] # 取出时间戳的字符串
+                            if self.dist_time(tmp_time_key, data[cav_id]['curr']['timestamp'])>0: # 检查past0的时间戳是>= cur时间戳，那么最起码要间隔一帧
                                 sample_interval = 1
                         if i>0: # 过去的几帧不要重复
                             sample_interval = 1                
@@ -500,7 +487,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 # check the timestamp index
                 data[cav_id]['past_k'][i] = {}
                 latest_sample_stamp_idx -= sample_interval
-                timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0]
+                timestamp_key = list(cav_content.items())[latest_sample_stamp_idx][0] # 获取时间戳
                 # load the corresponding data into the dictionary
                 # load param file: json is faster than yaml
                 json_file = cav_content[timestamp_key]['yaml'].replace("yaml", "json")
@@ -511,7 +498,7 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                         data[cav_id]['past_k'][i]['params'] = json.load(f)
                 else:
                     data[cav_id]['past_k'][i]['params'] = \
-                        load_yaml(cav_content[timestamp_key]['yaml'])
+                        load_yaml(cav_content[timestamp_key]['yaml']) # 获取yaml文件内容
                 # 没有 lidar pose
                 if not ('lidar_pose' in data[cav_id]['past_k'][i]['params']):
                     tmp_ego_pose = np.array(data[cav_id]['past_k'][i]['params']['true_ego_pos'])
@@ -529,13 +516,14 @@ class IntermediateFusionDatasetIrregular(basedataset.BaseDataset):
                 data[cav_id]['past_k'][i]['timestamp'] = timestamp_key
                 data[cav_id]['past_k'][i]['sample_interval'] = sample_interval
                 data[cav_id]['past_k'][i]['time_diff'] = \
-                    self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp'])
+                    self.dist_time(timestamp_key, data[cav_id]['curr']['timestamp']) # 延迟后的时间戳-cur时间戳
             
             data[cav_id]['debug'] = {}
             data[cav_id]['debug']['scene'] = scene_name
             data[cav_id]['debug']['cav_id'] = cav_id
 
         return data
+
 
     def __getitem__(self, idx):
         '''

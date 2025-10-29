@@ -11,7 +11,7 @@ import torch
 
 from opencood.utils.common_utils import torch_tensor_to_numpy
 from opencood.visualization import vis_utils, my_vis, simple_vis
-from opencood.tools.debug_tools import viz_compensation_latefusion_flow
+# from opencood.tools.debug_tools import viz_compensation_latefusion_flow
 def inference_late_fusion(batch_data, model, dataset):
     """
     Model inference for late fusion.
@@ -32,7 +32,7 @@ def inference_late_fusion(batch_data, model, dataset):
     output_dict = OrderedDict()
 
     for cav_id, cav_content in batch_data.items():
-        output_dict[cav_id] = model(cav_content)
+        output_dict[cav_id] = model(cav_content) # 这里是每个cav都进行输入
 
     pred_box_tensor, pred_score, gt_box_tensor = \
         dataset.post_process(batch_data,
@@ -143,7 +143,7 @@ def inference_intermediate_fusion_flow_module(batch_data, model, dataset, viz_bb
     Returns
     -------
     pred_box_tensor : torch.Tensor
-        The tensor of prediction bounding box after NMS.
+        The tensor of prediction bounding box after NMS. (n,8,3)
     gt_box_tensor : torch.Tensor
         The tensor of gt bounding box.
     """
@@ -154,20 +154,23 @@ def inference_intermediate_fusion_flow_module(batch_data, model, dataset, viz_bb
     pred_box_tensor, pred_score, gt_box_tensor = \
         dataset.post_process(batch_data,
                              output_dict)
+    
+    comm_volume = output_dict['ego']['comm_rate']
     # TODO: uncomment
-    # if viz_bbx_flag:
-    #     single_detection_bbx = output_dict['ego']['single_detection_bbx']
-    #     matched_idx_list = output_dict['ego']['matched_idx_list']
-    #     compensated_results_list = output_dict['ego']['compensated_results_list']
-    #     single_updated_feature = output_dict['ego']['single_updated_feature']
-    #     single_original_feature = output_dict['ego']['single_original_feature']
-    #     single_flow_map = output_dict['ego']['single_flow_map']
-    #     single_reserved_mask = output_dict['ego']['single_reserved_mask']
-    #     single_original_reserved_mask = output_dict['ego']['single_original_reserved_mask']
+    if viz_bbx_flag:
+        single_detection_bbx = output_dict['ego']['single_detection_bbx']
+        matched_idx_list = output_dict['ego']['matched_idx_list']
+        compensated_results_list = output_dict['ego']['compensated_results_list']
+        single_updated_feature = output_dict['ego']['single_updated_feature']
+        single_original_feature = output_dict['ego']['single_original_feature']
+        single_flow_map = output_dict['ego']['single_flow_map']
+        single_reserved_mask = output_dict['ego']['single_reserved_mask']
+        single_original_reserved_mask = output_dict['ego']['single_original_reserved_mask']
 
-    #     return pred_box_tensor, pred_score, gt_box_tensor, single_detection_bbx, matched_idx_list, compensated_results_list, single_updated_feature, single_original_feature, single_flow_map, single_reserved_mask, single_original_reserved_mask
+        return pred_box_tensor, pred_score, gt_box_tensor, single_detection_bbx, matched_idx_list, compensated_results_list, single_updated_feature, single_original_feature, single_flow_map, single_reserved_mask, single_original_reserved_mask
 
-    return pred_box_tensor, pred_score, gt_box_tensor
+    # return pred_box_tensor, pred_score, gt_box_tensor, output_dict['ego']['reserved_mask']
+    return pred_box_tensor, pred_score, gt_box_tensor, comm_volume
 
 def inference_intermediate_fusion_flow(batch_data, model, dataset):
     """
@@ -250,7 +253,7 @@ def inference_no_fusion(batch_data, model, dataset):
     """
     output_dict_ego = OrderedDict()
 
-    output_dict_ego['ego'] = model(batch_data['ego'])
+    output_dict_ego['ego'] = model(batch_data['ego']) # 只输入ego的信息
     # output_dict only contains ego
     # but batch_data havs all cavs, because we need the gt box inside.
 
@@ -315,11 +318,13 @@ def inference_early_fusion(batch_data, model, dataset):
         dataset.post_process(batch_data,
                              output_dict)
 
+    comm_volume = output_dict['ego']['comm_rate']
+
     # return_dict = {"pred_box_tensor" : pred_box_tensor, \
     #                     "pred_score" : pred_score, \
     #                     "gt_box_tensor" : gt_box_tensor}
 
-    return pred_box_tensor, pred_score, gt_box_tensor
+    return pred_box_tensor, pred_score, gt_box_tensor, comm_volume
 
 
 def inference_intermediate_fusion(batch_data, model, dataset):

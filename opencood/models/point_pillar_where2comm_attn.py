@@ -16,6 +16,7 @@ from opencood.models.sub_modules.naive_compress import NaiveCompressor
 # from opencood.models.fuse_modules.where2comm import Where2comm
 from opencood.models.fuse_modules.where2comm_attn import Where2comm
 from opencood.models.fuse_modules.raindrop_attn import raindrop_fuse
+from opencood.models.fuse_modules.where2comm_attn_Syncnet import Where2comm_SyncNet
 from opencood.models.fuse_modules.raindrop_swin import raindrop_swin
 from opencood.models.fuse_modules.raindrop_swin_w_single import raindrop_swin_w_single
 import torch
@@ -80,9 +81,7 @@ def get_past_k_pairwise_transformation2ego(past_k_lidar_pose, noise_level, k=3, 
     rot_std = noise_level['rot_std']
     pos_mean = 0 
     rot_mean = 0
-    
     pairwise_t_matrix = np.tile(np.eye(4), (max_cav, k, 1, 1)) # (L, k, 4, 4)
-
     ego_pose = past_k_lidar_pose[0, 0]
 
     t_list = []
@@ -164,8 +163,15 @@ class PointPillarWhere2commAttn(nn.Module):
             else:
                 self.rain_fusion = raindrop_swin(args['rain_model'])
         else: 
+            self.use_syncnet = False
             self.compensation = False
-            self.rain_fusion = raindrop_fuse(args['rain_model'])
+            if "use_syncnet" in args and args["use_syncnet"]:
+                print("===where2comm use where2comm+syncnet===")
+                self.use_syncnet = True
+                self.rain_fusion = Where2comm_SyncNet(args['rain_model'])
+            else:
+                print("===where2comm use raindrop_fuse===")
+                self.rain_fusion = raindrop_fuse(args['rain_model'])
 
         self.multi_scale = args['rain_model']['multi_scale']
         
@@ -257,8 +263,8 @@ class PointPillarWhere2commAttn(nn.Module):
         batch_dict = self.pillar_vfe(batch_dict)
         # (n, c) -> (batch_cav_size, C, H, W) put pillars into spatial feature map ('spatial_features')
         # import ipdb; ipdb.set_trace()
-        batch_dict = self.scatter(batch_dict)
-        batch_dict = self.backbone(batch_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2)
+        batch_dict = self.scatter(batch_dict) # 形成pseudo image
+        batch_dict = self.backbone(batch_dict) # 'spatial_features_2d': (batch_cav_size, 128*3, H/2, W/2) 这是进一步做特征提取
         # N, C, H', W'. [N, 384, 100, 352]
         spatial_features_2d = batch_dict['spatial_features_2d']
 
@@ -334,6 +340,7 @@ class PointPillarWhere2commAttn(nn.Module):
                 #         fused_feature_curr = self.shrink_conv(fused_feature_curr)
                 #         fused_feature_latency = self.shrink_conv(fused_feature_latency)
         else:
+            raise ValueError("====We didn't want this!===")
             fused_feature, communication_rates, result_dict = self.rain_fusion(spatial_features_2d,
                                             psm_single,
                                             record_len,
@@ -389,6 +396,20 @@ class PointPillarWhere2commAttn(nn.Module):
                 'record_len': record_len
             })
 
+        if self.use_syncnet:
+            _, C, H, W = psm_single.shape
+            # print("psm_single shape is ", psm_single.shape)
+            # print("rm_single shape is ", rm_single.shape)
+            psm_single = psm_single.reshape(-1, 2, 2, H, W) # (N, k, 2, H, W)
+            psm_single = psm_single[:,0,:,:,:]
+            rm_single = rm_single.reshape(-1, 2, 14, H, W) # (N, k, 14, H, W)
+            rm_single = rm_single[:,0,:,:,:]
+            # print("after: psm_single shape is ", psm_single.shape)
+            # print("after: rm_single shape is ", rm_single.shape)
+            # psm_single_list = self.regroup(psm_single, record_len, k=2)
+            # rm_single_list = self.regroup(rm_single, record_len, k=2)
+            # psm_single = psm_single_list[0]
+            # rm_single = rm_single_list[0]
         output_dict.update({'psm_single': psm_single,
                        'rm_single': rm_single,
                        'comm_rate': communication_rates

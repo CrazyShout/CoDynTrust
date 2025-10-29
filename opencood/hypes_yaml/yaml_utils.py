@@ -109,12 +109,12 @@ def load_point_pillar_params(param):
     param : dict
         Modified parameter dictionary with new attribute.
     """
-    cav_lidar_range = param['preprocess']['cav_lidar_range']
-    voxel_size = param['preprocess']['args']['voxel_size']
+    cav_lidar_range = param['preprocess']['cav_lidar_range'] # [-100.8, -40, -3, 100.8, 40, 1]
+    voxel_size = param['preprocess']['args']['voxel_size'] # [0.4, 0.4, 4]
 
     grid_size = (np.array(cav_lidar_range[3:6]) - np.array(
         cav_lidar_range[0:3])) / \
-                np.array(voxel_size)
+                np.array(voxel_size) # [504, 200, 1]
     grid_size = np.round(grid_size).astype(np.int64)
     param['model']['args']['point_pillar_scatter']['grid_size'] = grid_size
 

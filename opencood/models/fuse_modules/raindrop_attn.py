@@ -698,6 +698,7 @@ class raindrop_fuse(nn.Module):
                         _, communication_masks_list, communication_rates = self.naive_communication(batch_confidence_maps, record_len, pairwise_t_matrix)
                         communication_masks_tensor = torch.concat(communication_masks_list, dim=0) 
                         x = x * communication_masks_tensor
+                        # x[K:] = x[K:] * communication_masks_tensor[K:]
                     else:
                         communication_rates = torch.tensor(0).to(x.device)
                 else:
@@ -705,6 +706,7 @@ class raindrop_fuse(nn.Module):
                         communication_masks_tensor = F.max_pool2d(communication_masks_tensor.to(torch.float32), kernel_size=2)
                         # TODO: scale = 1, 2 不加 mask
                         x = x * communication_masks_tensor
+                        # x[K:] = x[K:] * communication_masks_tensor[K:]
                 
                 ############ 2. Split the confidence map #######################
                 # split x:[(L1, C*2^i, H/2^i, W/2^i), (L2, C*2^i, H/2^i, W/2^i), ...]

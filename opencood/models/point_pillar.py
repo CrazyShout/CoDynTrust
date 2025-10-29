@@ -34,6 +34,7 @@ class PointPillar(nn.Module):
         # Base BEV Backbone -> ResNetBEVBackbone
         # self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
         if 'resnet' in args['base_bev_backbone'] and args['base_bev_backbone']['resnet']:
+            print("===use resnet backbone===")
             self.backbone = ResNetBEVBackbone(args['base_bev_backbone'], 64)
         else:
             self.backbone = BaseBEVBackbone(args['base_bev_backbone'], 64)
@@ -43,6 +44,7 @@ class PointPillar(nn.Module):
 
         self.shrink_flag = False
         if 'shrink_header' in args:
+            print("===downsample to reduce memeory===")
             self.shrink_flag = True
             self.shrink_conv = DownsampleConv(args['shrink_header'])
             self.out_channel = args['shrink_header']['dim'][-1]

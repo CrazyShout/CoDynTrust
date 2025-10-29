@@ -368,9 +368,9 @@ def get_mask_for_boxes_within_range_torch(boxes, gt_range):
     # mask out the gt bounding box out fixed range (-140, -40, -3, 140, 40 1)
     device = boxes.device
     boundary_lower_range = \
-        torch.Tensor(gt_range[:2]).reshape(1, 1, -1).to(device)
+        torch.Tensor(gt_range[:2]).reshape(1, 1, -1).to(device)  # (1, 1, 2)
     boundary_higher_range = \
-        torch.Tensor(gt_range[3:5]).reshape(1, 1, -1).to(device)
+        torch.Tensor(gt_range[3:5]).reshape(1, 1, -1).to(device) # (1, 1, 2)
 
     mask = torch.all(
         torch.all(boxes[:, :, :2] >= boundary_lower_range,
@@ -410,11 +410,11 @@ def mask_boxes_outside_range_numpy(boxes, limit_range, order,
 
     new_boxes = boxes.copy()
     if boxes.shape[1] == 7:
-        new_boxes = boxes_to_corners_3d(new_boxes, order)
+        new_boxes = boxes_to_corners_3d(new_boxes, order) # [1， 8， 3]
 
     mask = ((new_boxes >= limit_range[0:3]) &
-            (new_boxes <= limit_range[3:6])).all(axis=2)
-    mask = mask.sum(axis=1) >= min_num_corners  # (N)
+            (new_boxes <= limit_range[3:6])).all(axis=2) # 所有在范围内的会是True
+    mask = mask.sum(axis=1) >= min_num_corners  # (N) 这是为了保证每个角都满足要求
 
     if return_mask:
         return boxes[mask], mask
@@ -474,7 +474,7 @@ def project_world_objects(object_dict,
     order : str
         'lwh' or 'hwl'
     """
-    for object_id, object_content in object_dict.items():
+    for object_id, object_content in object_dict.items(): # 第一个是车id
         location = object_content['location']
         rotation = object_content['angle']
         center = object_content['center']
@@ -843,7 +843,7 @@ def remove_large_pred_bbx(bbx_3d):
     index : torch.Tensor
         The keep index.
     """
-    bbx_x_max = torch.max(bbx_3d[:, :, 0], dim=1)[0]
+    bbx_x_max = torch.max(bbx_3d[:, :, 0], dim=1)[0] # 八角框表示中，最大和最小的x
     bbx_x_min = torch.min(bbx_3d[:, :, 0], dim=1)[0]
     x_len = bbx_x_max - bbx_x_min
 
@@ -855,7 +855,7 @@ def remove_large_pred_bbx(bbx_3d):
     bbx_z_min = torch.min(bbx_3d[:, :, 1], dim=1)[0]
     z_len = bbx_z_max - bbx_z_min
 
-    index = torch.logical_and(x_len <= 6, y_len <= 6)
+    index = torch.logical_and(x_len <= 6, y_len <= 6) # 长宽小于等于6
     index = torch.logical_and(index, z_len)
 
     return index
@@ -1074,31 +1074,31 @@ def project_world_objects_dairv2x(object_list,
         (6, ), lidar pose under world coordinate, [x, y, z, roll, yaw, pitch].
 
     lidar_range : list
-         [minx, miny, minz, maxx, maxy, maxz]
+         [minx, miny, minz, maxx, maxy, maxz]   [-100.8, -40, -3, 100.8, 40, 1]
 
     order : str
         'lwh' or 'hwl'
     """
     i = 0
 
-    for object_content in object_list: 
+    for object_content in object_list: # 协作场景下的每个object遍历
         object_id = i
         i = i + 1
         lidar_to_world = x_to_world(lidar_pose) # T_world_lidar
-        world_to_lidar = np.linalg.inv(lidar_to_world)
+        world_to_lidar = np.linalg.inv(lidar_to_world) # 求逆
 
         corners_world = np.array(object_content['world_8_points']) # [8,3]
-        corners_world_homo = np.pad(corners_world, ((0,0), (0,1)), constant_values=1) # [8, 4]
-        corners_lidar = (world_to_lidar @ corners_world_homo.T).T 
+        corners_world_homo = np.pad(corners_world, ((0,0), (0,1)), constant_values=1) # [8, 4] # 第二维最后增加一个1 这是为了将其转化为齐次坐标
+        corners_lidar = (world_to_lidar @ corners_world_homo.T).T # [8, 4]
 
         lidar_range_z_larger = copy.deepcopy(lidar_range)
         lidar_range_z_larger[2] -= 1
-        lidar_range_z_larger[5] += 1
+        lidar_range_z_larger[5] += 1 # 扩大了z轴范围
 
         bbx_lidar = corners_lidar
         bbx_lidar = np.expand_dims(bbx_lidar[:, :3], 0) # [1, 8, 3]
-        bbx_lidar = corner_to_center(bbx_lidar, order=order)
-        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range_z_larger, order)
+        bbx_lidar = corner_to_center(bbx_lidar, order=order) # 八角表示->中心表示 [1, 7]
+        bbx_lidar = mask_boxes_outside_range_numpy(bbx_lidar, lidar_range_z_larger, order) # 判断是否满足范围要求
         if bbx_lidar.shape[0] > 0:
             output_dict.update({object_id: bbx_lidar})
 

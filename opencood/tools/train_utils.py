@@ -5,15 +5,18 @@
 
 import glob
 import importlib
-import yaml
 import os
 import re
-from datetime import datetime
 import shutil
+from datetime import datetime
+from pathlib import Path
+
+import numpy
 import torch
 import torch.optim as optim
-import numpy
-from pathlib import Path
+import yaml
+from ranger21 import Ranger21
+
 
 def backup_script(full_path, folders_to_save=["models", "data_utils", "utils", "loss", "tools"]):
     target_folder = os.path.join(full_path, 'scripts')
@@ -294,6 +297,8 @@ def setup_train(hypes, log_path="/DB/data/sizhewei"):
     # current_path = os.path.dirname(__file__)
     current_path = Path(log_path)
     current_path = os.path.join(current_path, 'logs/')
+    if "dataset" in hypes:
+        current_path = os.path.join(current_path, hypes['dataset'])
 
     full_path = os.path.join(current_path, folder_name)
     print("full path is: ", full_path)
@@ -393,7 +398,7 @@ def create_loss(hypes):
     return criterion
 
 
-def setup_optimizer(hypes, model, is_pre_trained=False):
+def setup_optimizer(hypes, model, is_pre_trained=False, num_batches_per_epoch = None):
     """
     Create optimizer corresponding to the yaml file
 
@@ -407,23 +412,50 @@ def setup_optimizer(hypes, model, is_pre_trained=False):
     method_dict = hypes['optimizer']
     optimizer_method = getattr(optim, method_dict['core_method'], None)
     if not optimizer_method:
-        raise ValueError('{} is not supported'.format(method_dict['name']))
+        if method_dict['core_method'] == 'Ranger21':
+            optimizer_method = Ranger21
+        else:
+            raise ValueError('{} is not supported'.format(method_dict['name']))
     #####################################################################
     if is_pre_trained:
         params = filter(lambda p: p.requires_grad, model.parameters())
     else:
         params = model.parameters()
+        
+    # for name, param in model.named_parameters():
+    #     print(f"Parameter: {name}, Shape: {param.shape}, Requires Grad: {param.requires_grad}")        
+    
+    joint_optimization = False
+    if joint_optimization: # 联合优化 从上至下，逐渐unfreeeze 正在train的学习率高，其他学习率低 最高2e-4 最低2e-6
+        print("--------------------Joint Optimization--------------------")
+        return optimizer_method([
+            {'params': model.matcher.score_generate.parameters(), 'lr': 2e-4},
+            # {'params': model.fused_backbone.parameters(), 'lr': 2e-6},
+            # {'params': model.fused_shrink_conv.parameters(), 'lr': 2e-6},
+            # {'params': model.fused_cls_head.parameters(), 'lr': 2e-4},
+            # {'params': model.fused_reg_head.parameters(), 'lr': 2e-4},
+            {'params': model.fused_dir_head.parameters(), 'lr': 2e-4},
+        ])
     ######################################################################
     if 'args' in method_dict:
-        return optimizer_method(params,
-                                lr=method_dict['lr'],
-                                **method_dict['args'])
+        if method_dict['core_method'] == 'Ranger21': 
+            return optimizer_method(params,
+                                    lr=method_dict['lr'],
+                                    num_epochs=30,
+                                    eps = 1e-10,
+                                    weight_decay=1e-4,
+                                    num_batches_per_epoch=num_batches_per_epoch
+                                    )
+        else:
+            return optimizer_method(params,
+                                    lr=method_dict['lr'],
+                                    **method_dict['args'])
     else:
         return optimizer_method(params,
                                 lr=method_dict['lr'])
 
 
-def setup_lr_schedular(hypes, optimizer, init_epoch=None):
+def setup_lr_schedular(hypes, optimizer, init_epoch=None, n_iter_per_epoch = None):
     """
     Set up the learning rate schedular.
 
@@ -451,8 +483,35 @@ def setup_lr_schedular(hypes, optimizer, init_epoch=None):
         scheduler = MultiStepLR(optimizer,
                                 milestones=milestones,
                                 gamma=gamma)
+    elif lr_schedule_config['core_method'] == 'cosineannealwarm':
+        print('cosine annealing is chosen for lr scheduler')
+        from timm.scheduler.cosine_lr import CosineLRScheduler
 
+        num_steps = lr_schedule_config['epoches'] * n_iter_per_epoch
+        warmup_lr = lr_schedule_config['warmup_lr']
+        warmup_steps = lr_schedule_config['warmup_epoches'] * n_iter_per_epoch
+        lr_min = lr_schedule_config['lr_min']
+
+        scheduler = CosineLRScheduler(
+            optimizer,
+            t_initial=num_steps, # 余弦退火周期的长度（去除warmup部分）
+            lr_min=lr_min, # 最小学习率
+            warmup_lr_init=warmup_lr, # warmup阶段的初始学习率
+            warmup_t=warmup_steps, # warmup的epoch数
+            cycle_limit=1, # 循环次数，1表示只进行一次完整的余弦退火周期
+            t_in_epochs=False,  # 是否以epoch为单位调整学习率
+        )
+    elif lr_schedule_config['core_method'] == 'cosineannealinglr':
+        print(f"===使用余弦退火策略, {lr_schedule_config['T_max']}个epoch后会衰减到最低, 最低为{lr_schedule_config['eta_min']}===")
+        from torch.optim.lr_scheduler import CosineAnnealingLR
+
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=lr_schedule_config['T_max'],
+            eta_min=lr_schedule_config['eta_min']
+        )
     else:
+        print("===使用指数衰减学习率策略===")
         from torch.optim.lr_scheduler import ExponentialLR
         gamma = lr_schedule_config['gamma']
         scheduler = ExponentialLR(optimizer, gamma)

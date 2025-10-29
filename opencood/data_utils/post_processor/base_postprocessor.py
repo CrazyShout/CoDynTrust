@@ -135,7 +135,7 @@ class BasePostprocessor(object):
         gt_box3d_tensor = gt_box3d_tensor[mask, :, :]
         return 0
 
-    def generate_gt_bbx(self, data_dict):
+    def generate_gt_bbx(self, data_dict): # 推理的时候才会用到
         """
         The base postprocessor will generate 3d groundtruth bounding box.
 
@@ -165,35 +165,35 @@ class BasePostprocessor(object):
             # object_bbx_center is clean.
             transformation_matrix = cav_content['transformation_matrix_clean']
 
-            object_bbx_center = cav_content['object_bbx_center']
-            object_bbx_mask = cav_content['object_bbx_mask']
-            object_ids = cav_content['object_ids']
+            object_bbx_center = cav_content['object_bbx_center'] # 这个一个scenario下所有的cav周围的object 且都处于 ego view下 （100， 7）
+            object_bbx_mask = cav_content['object_bbx_mask'] # 上一个对应的掩码
+            object_ids = cav_content['object_ids'] # 车id
             object_bbx_center = object_bbx_center[object_bbx_mask == 1]
 
             # convert center to corner
             object_bbx_corner = \
                 box_utils.boxes_to_corners_3d(object_bbx_center,
-                                              self.params['order'])
+                                              self.params['order']) # （n_all, 7） to  (n_all, 8, 3)
             projected_object_bbx_corner = \
                 box_utils.project_box3d(object_bbx_corner.float(),
-                                        transformation_matrix)
-            gt_box3d_list.append(projected_object_bbx_corner)
+                                        transformation_matrix) # 投影，但是这个投影其实是单位矩阵，所以不变
+            gt_box3d_list.append(projected_object_bbx_corner) # 列表中加入一个(n_all, 8, 3)
             # append the corresponding ids
             object_id_list += object_ids
 
         # gt bbx 3d
-        gt_box3d_list = torch.vstack(gt_box3d_list)
+        gt_box3d_list = torch.vstack(gt_box3d_list) # 其实列表只有 一个元素 (n_all, 8, 3)
         # some of the bbx may be repetitive, use the id list to filter
         gt_box3d_selected_indices = \
             [object_id_list.index(x) for x in set(object_id_list)]
-        gt_box3d_tensor = gt_box3d_list[gt_box3d_selected_indices]
+        gt_box3d_tensor = gt_box3d_list[gt_box3d_selected_indices] # 去重
 
         # filter the gt_box to make sure all bbx are in the range
         mask = \
             box_utils.get_mask_for_boxes_within_range_torch(gt_box3d_tensor, self.params['gt_range'])
         gt_box3d_tensor = gt_box3d_tensor[mask, :, :]
 
-        return gt_box3d_tensor
+        return gt_box3d_tensor # 返回的是（n, 8, 3）
 
     def generate_gt_bbx_by_iou(self, data_dict):
         """
@@ -307,19 +307,19 @@ class BasePostprocessor(object):
         from opencood.data_utils.datasets import GT_RANGE_OPV2V
 
         tmp_object_dict = {}
-        for cav_content in cav_contents:
+        for cav_content in cav_contents: # 只会遍历依次
             tmp_object_dict.update(cav_content['params']['vehicles'])
 
         output_dict = {}
-        filter_range = self.params['anchor_args']['cav_lidar_range'] # if self.train else GT_RANGE_OPV2V
-
+        filter_range = self.params['anchor_args']['cav_lidar_range']  # if self.train else GT_RANGE_OPV2V
+        
         box_utils.project_world_objects(tmp_object_dict,
                                         output_dict,
                                         reference_lidar_pose,
                                         filter_range,
                                         self.params['order'])
 
-        object_np = np.zeros((self.params['max_num'], 7))
+        object_np = np.zeros((self.params['max_num'], 7)) # n，7
         mask = np.zeros(self.params['max_num'])
         object_ids = []
 
@@ -409,10 +409,10 @@ class BasePostprocessor(object):
         Parameters
         ----------
         cav_contents : list
-            List of dictionary, save all cavs' information.
+            List of dictionary, save all cavs' information. 车或路的数据 只有一个元素的列表
 
         reference_lidar_pose : list
-            The final target lidar pose with length 6.
+            The final target lidar pose with length 6. 无噪声的ego lidar pose
 
         Returns
         -------
@@ -427,23 +427,22 @@ class BasePostprocessor(object):
         # tmp_object_dict = {}
         tmp_object_list = []
         cav_content = cav_contents[0]
-        tmp_object_list = cav_content['params']['vehicles']
+        tmp_object_list = cav_content['params']['vehicles'] # 协作场景下的世界标签
 
         output_dict = {}
-        filter_range = self.params['anchor_args']['cav_lidar_range']
+        filter_range = self.params['anchor_args']['cav_lidar_range'] # 雷达范围
 
-
-        box_utils.project_world_objects_dairv2x(tmp_object_list,
+        box_utils.project_world_objects_dairv2x(tmp_object_list, # 世界标签数据
                                         output_dict,
-                                        reference_lidar_pose,
-                                        filter_range,
+                                        reference_lidar_pose, # 参考雷达pose，其实是无噪声的ego lidar pose
+                                        filter_range, # 雷达范围
                                         self.params['order'])
 
-        object_np = np.zeros((self.params['max_num'], 7))
-        mask = np.zeros(self.params['max_num'])
+        object_np = np.zeros((self.params['max_num'], 7)) # 初始化形状[100, 7]
+        mask = np.zeros(self.params['max_num']) # [100]
         object_ids = []
 
-        for i, (object_id, object_bbx) in enumerate(output_dict.items()):
+        for i, (object_id, object_bbx) in enumerate(output_dict.items()): # 开始赋值填充，填充过的地方会赋1标记，同时id会被记录到列表
             object_np[i] = object_bbx[0, :]
             mask[i] = 1
             object_ids.append(object_id)

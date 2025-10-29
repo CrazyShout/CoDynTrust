@@ -69,7 +69,7 @@ class IntermediateFusionDatasetDAIRMultisweep(basedataset.BaseDataset):
             self.tau = 0
 
         if 'binomial_n' in params:
-            self.binomial_n = params['binomial_n']
+            self.binomial_n = params['binomial_n'] 
         else:
             self.binomial_n = 0
 
@@ -123,7 +123,7 @@ class IntermediateFusionDatasetDAIRMultisweep(basedataset.BaseDataset):
                 'max_cav' not in params['train_params']:
             self.max_cav = 5
         else:
-            self.max_cav = params['train_params']['max_cav']
+            self.max_cav = params['train_params']['max_cav'] # 默认为5
 
         # first load all paths of different scenarios
         scenario_folders = sorted([os.path.join(root_dir, x)

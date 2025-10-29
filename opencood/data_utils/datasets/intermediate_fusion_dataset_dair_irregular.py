@@ -88,10 +88,10 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         self.max_cav = 2
         
         if 'num_sweep_frames' in params:    # number of frames we use in LSTM
-            self.k = params['num_sweep_frames']
+            self.k = params['num_sweep_frames'] # 默认是1
         else:
             self.k = 1
-
+        # finetune使用的参数
         if 'binomial_n' in params:
             self.binomial_n = params['binomial_n']
         else:
@@ -109,14 +109,14 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         if params['fusion']['args']['proj_first']:
             self.proj_first = True
         else:
-            self.proj_first = False
+            self.proj_first = False # 默认暂时先不投影到ego 坐标系
 
         if "kd_flag" in params.keys():
             self.kd_flag = params['kd_flag']
         else:
-            self.kd_flag = False
+            self.kd_flag = False # 默认是false
 
-        if "box_align" in params.keys():
+        if "box_align" in params.keys(): # 默认没有 box 对齐
             self.box_align = True
             self.stage1_result_path = params['box_align']['train_result'] if train else params['box_align']['val_result']
             self.stage1_result = load_json(self.stage1_result_path)
@@ -129,7 +129,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         if params['fusion']['args']['clip_pc']:
             self.clip_pc = True
         else:
-            self.clip_pc = False
+            self.clip_pc = False # 默认是false
             
         if 'select_kp' in params:
             self.select_keypoint = params['select_kp']
@@ -150,11 +150,11 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         else:
             split_dir = params['validate_dir']
 
-        self.root_dir = '/remote-home/share/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure' # TODO:
+        self.root_dir = 'my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure' # TODO: 不应该写死而是用yaml定制
         self.inf_idx2info = build_idx_to_info(
             load_json(osp.join(self.root_dir, "infrastructure-side/data_info.json"))
         )
-        self.co_idx2info = build_idx_to_co_info(
+        self.co_idx2info = build_idx_to_co_info( # 字典：  车端点云id ： 对应所有信息
             load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
         )
         self.inf_fid2veh_fid = build_inf_fid_to_veh_fid(load_json(osp.join(self.root_dir, "cooperative/data_info.json"))
@@ -172,7 +172,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         """
         Written by sizhewei @ 2022/10/05
         Given veh_frame_id, determine whether there is a corresponding inf_frame that meets the k delay requirement.
-
+        给一个车端点云id, 检查是否有满足的路端id
         Parameters
         ----------
         veh_frame_id : 05d
@@ -186,14 +186,14 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # print('veh_frame_id: ',veh_frame_id,'\n')
         frame_info = {}
         
-        frame_info = self.co_idx2info[veh_frame_id]
-        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
-        cur_inf_info = self.inf_idx2info[inf_frame_id]
-        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])):
+        frame_info = self.co_idx2info[veh_frame_id] # 找到协作信息 里面也是一个字典
+        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "") # 找到路端对应的id
+        cur_inf_info = self.inf_idx2info[inf_frame_id] # 找到路端完整信息
+        if (int(inf_frame_id) - self.binomial_n*self.k < int(cur_inf_info["batch_start_id"])): # 往前推 10 * 保存帧数 的时间间隔 如果超出了一个场景中的最开始的id 那就说明这个车id找不到对应的路端id
             return False
-        for i in range(3*self.binomial_n * self.k):# TODO: delete 3
-            delay_id = id_to_str(int(inf_frame_id) - i) 
-            if delay_id not in self.inf_fid2veh_fid.keys():
+        for i in range(self.binomial_n * self.k):# TODO: delete 3
+            delay_id = id_to_str(int(inf_frame_id) - i)  # 延迟i之前的id
+            if delay_id not in self.inf_fid2veh_fid.keys(): # 如果延迟之前的id在车路信息对应关系索引中找不到，那此车端id也无效，但是很奇怪，这里要检查三倍以上的延迟长度？
                 return False
 
         return True
@@ -226,21 +226,21 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                 }
             }
         """
-        veh_frame_id = self.data[idx]
+        veh_frame_id = self.data[idx] # 取出数据，其中每一个数据都是一个车端id
         # print('veh_frame_id: ',veh_frame_id,'\n')
         frame_info = {}
         system_error_offset = {}
         
-        frame_info = self.co_idx2info[veh_frame_id]
-        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "")
+        frame_info = self.co_idx2info[veh_frame_id] # 取出这一帧的信息，也就是协作信息
+        inf_frame_id = frame_info['infrastructure_image_path'].split("/")[-1].replace(".jpg", "") # 路端id
 
         # 生成冻结分布函数
-        bernoulliDist = stats.bernoulli(self.binomial_p) 
+        bernoulliDist = stats.bernoulli(self.binomial_p) # 0-1分布，在binomial_p默认为0的情况下，意味着永远失败
         # B(n, p)
-        trails = bernoulliDist.rvs(self.binomial_n)
-        sample_interval = sum(trails)
+        trails = bernoulliDist.rvs(self.binomial_n) # 生成复合这个分布的数，一共 binomial_n 个，默认是10个也就是往前10个帧，且binomial_p = 0，随机采样
+        sample_interval = sum(trails) # 0  这个求和相当于算出来10个过去帧采样了几帧
         
-        curr_inf_frame_id = inf_frame_id
+        curr_inf_frame_id = inf_frame_id # 记录当前的路端id
         inf_frame_id = id_to_str(int(inf_frame_id) - sample_interval)
 
         system_error_offset = frame_info["system_error_offset"]
@@ -249,16 +249,17 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         data[0] = OrderedDict()
         data[0]['ego'] = True
         data[0]['params'] = OrderedDict()
-        data[0]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
+        data[0]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path'])) # 加载label_word下的json文件 也就是协作场景下的世界标签
         # print(data[0]['params']['vehicles'])
         lidar_to_novatel_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/lidar_to_novatel/'+str(veh_frame_id)+'.json'))
         novatel_to_world_json_file = load_json(os.path.join(self.root_dir,'vehicle-side/calib/novatel_to_world/'+str(veh_frame_id)+'.json'))
 
-        transformation_matrix = veh_side_rot_and_trans_to_trasnformation_matrix(lidar_to_novatel_json_file,novatel_to_world_json_file)
+        transformation_matrix = veh_side_rot_and_trans_to_trasnformation_matrix(lidar_to_novatel_json_file,novatel_to_world_json_file) # 得到转换矩阵，即从lidar坐标转为世界坐标
 
-        data[0]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix)
+        data[0]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix) # 将转换矩阵变为姿态表示
 
-        data[0]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["vehicle_pointcloud_path"]))
+        data[0]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir,frame_info["vehicle_pointcloud_path"])) # [n, 4]
+
         if self.clip_pc:
             data[0]['lidar_np'] = data[0]['lidar_np'][data[0]['lidar_np'][:,0]>0]
 
@@ -272,9 +273,9 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # data[1]['params']['vehicles'] = load_json(os.path.join(self.root_dir,frame_info['cooperative_label_path']))
         data[1]['params']['vehicles'] = [] # we only load cooperative label in vehicle side
 
-        virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json'))
+        virtuallidar_to_world_json_file = load_json(os.path.join(self.root_dir,'infrastructure-side/calib/virtuallidar_to_world/'+str(inf_frame_id)+'.json')) # 读取虚拟Lidar坐标的json
 
-        transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset)
+        transformation_matrix1 = inf_side_rot_and_trans_to_trasnformation_matrix(virtuallidar_to_world_json_file,system_error_offset) # 转为仿射变换矩阵表示
         data[1]['params']['lidar_pose'] = tfm_to_pose(transformation_matrix1)
 
 
@@ -284,7 +285,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         data[1]['params']['vehicles_single'] = load_json(os.path.join(self.root_dir, \
                                 'infrastructure-side/label/virtuallidar/{}.json'.format(inf_frame_id)))
 
-        cur_inf_info = self.inf_idx2info[inf_frame_id]
+        cur_inf_info = self.inf_idx2info[inf_frame_id] # 找到一个路端id的对应的路端信息 
         data[1]['lidar_np'], _ = pcd_utils.read_pcd(os.path.join(self.root_dir, \
             'infrastructure-side', cur_inf_info['pointcloud_path']))
 
@@ -326,7 +327,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # calculate the transformation matrix
         transformation_matrix = \
             x1_to_x2(selected_cav_base['params']['lidar_pose'],
-                     ego_pose) # T_ego_cav
+                     ego_pose) # T_ego_cav     路端到车端的变换矩阵
         transformation_matrix_clean = \
             x1_to_x2(selected_cav_base['params']['lidar_pose_clean'],
                      ego_pose_clean)
@@ -334,7 +335,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # retrieve objects under ego coordinates
         # this is used to generate accurate GT bounding box.
         object_bbx_center, object_bbx_mask, object_ids = self.generate_object_center([selected_cav_base],
-                                                    ego_pose_clean)
+                                                    ego_pose_clean) # [100, 7], [100], [k] k表示该场景下有多少辆车
 
         # filter lidar
         lidar_np = selected_cav_base['lidar_np']
@@ -353,7 +354,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # x,y,z in ego space
         projected_lidar = \
             box_utils.project_points_by_matrix_torch(curr_lidar_np[:, :3],
-                                                        transformation_matrix)
+                                                        transformation_matrix) # 投影到ego
         if self.kd_flag:
             lidar_np_clean = copy.deepcopy(lidar_np)
 
@@ -416,10 +417,10 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
 
         # first find the ego vehicle's lidar pose
         for cav_id, cav_content in base_data_dict.items():
-            if cav_content['ego']:
-                ego_id = cav_id
-                ego_lidar_pose = cav_content['params']['lidar_pose']
-                ego_lidar_pose_clean = cav_content['params']['lidar_pose_clean']
+            if cav_content['ego']: # 如果是车端
+                ego_id = cav_id # 记录下ego的数据id 也就是0
+                ego_lidar_pose = cav_content['params']['lidar_pose'] # lidar 位姿表示
+                ego_lidar_pose_clean = cav_content['params']['lidar_pose_clean'] # 无噪声 lidar 位姿表示
                 break
             
         assert cav_id == list(base_data_dict.keys())[
@@ -444,28 +445,27 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
             projected_lidar_stack = []
 
         # loop over all CAVs to process information
-        for cav_id, selected_cav_base in base_data_dict.items():
+        for cav_id, selected_cav_base in base_data_dict.items(): # 循环两次，因为是一车一路
             # check if the cav is within the communication range with ego
             distance = \
                 math.sqrt((selected_cav_base['params']['lidar_pose'][0] -
                            ego_lidar_pose[0]) ** 2 + (
                                   selected_cav_base['params'][
                                       'lidar_pose'][1] - ego_lidar_pose[
-                                      1]) ** 2)
+                                      1]) ** 2) # 计算与ego的欧式距离
 
             # if distance is too far, we will just skip this agent
-            if distance > self.params['comm_range']:
+            if distance > self.params['comm_range']: # 距离太远则应该放弃通信
                 too_far.append(cav_id)
                 continue
 
 
-            lidar_pose_clean_list.append(selected_cav_base['params']['lidar_pose_clean'])
+            lidar_pose_clean_list.append(selected_cav_base['params']['lidar_pose_clean']) # 无噪声的lidar pose
             lidar_pose_list.append(selected_cav_base['params']['lidar_pose']) # 6dof pose
-            cav_id_list.append(cav_id)
-
+            cav_id_list.append(cav_id) # 形成列表 == [0,1]
 
         for cav_id in cav_id_list:
-            selected_cav_base = base_data_dict[cav_id]
+            selected_cav_base = base_data_dict[cav_id] # 得到车端或者路端的数据
 
             selected_cav_processed = self.get_item_single_car(
                 selected_cav_base,
@@ -474,7 +474,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
                 idx)
                 
             object_stack.append(selected_cav_processed['object_bbx_center'])
-            object_id_stack += selected_cav_processed['object_ids']
+            object_id_stack += selected_cav_processed['object_ids'] # （n）由于只有车端有协作label，所以生成的只有车端的部分，路端的为[] 空
 
             processed_features.append(
                 selected_cav_processed['processed_features'])
@@ -505,9 +505,9 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         ######################################################
 
         # single label
-        single_label_dicts = self.post_processor.collate_batch(single_label_list)
-        single_object_bbx_center = torch.from_numpy(np.array(single_object_bbx_center_list))
-        single_object_bbx_mask = torch.from_numpy(np.array(single_object_bbx_mask_list))
+        single_label_dicts = self.post_processor.collate_batch(single_label_list) # 单车GT，车路单车GT合并在一起，形成一个全新的字典，key不变，value变化，如pos_equal_one：(H, W, 2) -> pos_equal_one：[(H, W, 2), (H, W, 2)] 即形状为(2, H, W, 2)
+        single_object_bbx_center = torch.from_numpy(np.array(single_object_bbx_center_list)) # (2, 100, 7)
+        single_object_bbx_mask = torch.from_numpy(np.array(single_object_bbx_mask_list)) # (2, 100)
         processed_data_dict['ego'].update({
             "single_label_dict_torch": single_label_dicts,
             "single_object_bbx_center_torch": single_object_bbx_center,
@@ -525,31 +525,31 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
 
         # exclude all repetitive objects    
         unique_indices = \
-            [object_id_stack.index(x) for x in set(object_id_stack)]
-        object_stack = np.vstack(object_stack)
-        object_stack = object_stack[unique_indices]
+            [object_id_stack.index(x) for x in set(object_id_stack)] # 去重，
+        object_stack = np.vstack(object_stack) # 世界label [(n1,7), (n2,7)]->[N,7] 也就是协作参与者的object 先合在一起
+        object_stack = object_stack[unique_indices] # 去重 （N', 7）
 
         # make sure bounding boxes across all frames have the same number
         object_bbx_center = \
-            np.zeros((self.params['postprocess']['max_num'], 7))
-        mask = np.zeros(self.params['postprocess']['max_num'])
-        object_bbx_center[:object_stack.shape[0], :] = object_stack
-        mask[:object_stack.shape[0]] = 1
+            np.zeros((self.params['postprocess']['max_num'], 7)) # （100，7）
+        mask = np.zeros(self.params['postprocess']['max_num']) # （100）
+        object_bbx_center[:object_stack.shape[0], :] = object_stack # 将实际的世界label bbx赋值过去
+        mask[:object_stack.shape[0]] = 1 # 置位
 
         # merge preprocessed features from different cavs into the same dict
-        cav_num = len(processed_features)
+        cav_num = len(processed_features) # 合并多个cav 点云数据（已体素化） 这里=2 因为就车和路两方
 
         merged_feature_dict = self.merge_features_to_dict(processed_features)
 
         # generate the anchor boxes
-        anchor_box = self.post_processor.generate_anchor_box()
+        anchor_box = self.post_processor.generate_anchor_box() # 生成预设置锚框 之前生成的被用于单车
 
         # generate targets label
         label_dict = \
             self.post_processor.generate_label(
                 gt_box_center=object_bbx_center,
                 anchors=anchor_box,
-                mask=mask)
+                mask=mask) # 生成用于训练的label
 
         processed_data_dict['ego'].update(
             {'object_bbx_center': object_bbx_center,
@@ -727,7 +727,10 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
         # add pairwise_t_matrix to label dict
         label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
         label_torch_dict['record_len'] = record_len
-
+        # print("+++++++++++++++++++++++++++++++")
+        # print(processed_lidar_torch_dict['voxel_coords'].shape)
+        # print("+++++++++++++++++++++++++++++++")
+        # exit(0)
         # object id is only used during inference, where batch size is 1.
         # so here we only get the first element.
         output_dict['ego'].update({'object_bbx_center': object_bbx_center,
@@ -761,7 +764,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
 
         if self.visualize:
             origin_lidar = \
-                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar))
+                np.array(downsample_lidar_minimum(pcd_np_list=origin_lidar)) # 下采样到最小值
             origin_lidar = torch.from_numpy(origin_lidar)
             output_dict['ego'].update({'origin_lidar': origin_lidar})
         
@@ -771,7 +774,7 @@ class IntermediateFusionDatasetDAIRIrregular(intermediate_fusion_dataset.Interme
             output_dict['ego'].update({'teacher_processed_lidar':teacher_processed_lidar_torch_dict})
 
         if self.params['preprocess']['core_method'] == 'SpVoxelPreprocessor' and \
-            (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item():
+            (output_dict['ego']['processed_lidar']['voxel_coords'][:, 0].max().int().item() + 1) != record_len.sum().int().item(): # 这是容错，检查最大编号+1是不是等于一个batch中的所有样本数
             return None
 
         return output_dict

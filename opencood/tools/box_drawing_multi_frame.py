@@ -40,32 +40,33 @@ def draw_trajectory(pt_file, save_path):
     '''
     data = torch.load(pt_file)
 
-    agent_num = len(data["single_detection_bbx"])
+    agent_num = len(data["single_detection_bbx"]) # 一个场景下的agent数目
     left_hand = True
     pc_range = data['gt_range']
-
-    for agent_id in range(1, agent_num):
+    print('agent_num is :', agent_num)
+    print(pc_range)
+    for agent_id in range(1, agent_num): # 这是一个场景下的所有车 ego 不参与循环
         # step0: initailize canvas
         canvas = canvas_bev.Canvas_BEV_heading_right(canvas_shape=(int((pc_range[4]-pc_range[1])*10), int((pc_range[3]-pc_range[0])*10)),
                                                 canvas_x_range=(pc_range[0], pc_range[3]), 
                                                 canvas_y_range=(pc_range[1], pc_range[4]),
                                                 left_hand=left_hand) 
         # step 1: transform detection results
-        lidar_pose_past = data['lidar_pose_0'][agent_id].cpu().numpy()
-        lidar_pose_current = data['lidar_pose_current'][agent_id].cpu().numpy()
+        lidar_pose_past = data['lidar_pose_0'][agent_id].cpu().numpy() # past0的 pose （6）
+        lidar_pose_current = data['lidar_pose_current'][agent_id].cpu().numpy() # cur 的pose （6）
 
         past_to_current = x1_to_x2(lidar_pose_past, lidar_pose_current)
-        past_to_current = torch.from_numpy(past_to_current).to('cuda').float()
-        boxes_past_in_past_coor_dict = data['single_detection_bbx'][agent_id] 
+        past_to_current = torch.from_numpy(past_to_current).to('cuda').float() # 转移到cuda
+        boxes_past_in_past_coor_dict = data['single_detection_bbx'][agent_id]  # 取出场景下某一个agent的检测数据 三帧
         boxes_past_in_current_coor_dict = OrderedDict()
 
-        for past_frame, detections in boxes_past_in_past_coor_dict.items():
+        for past_frame, detections in boxes_past_in_past_coor_dict.items(): # 遍历三帧检测结果，全部转到cur  view
             if past_frame == 'past_k_time_diff':
                 continue
             boxes_past_in_current_coor_dict[past_frame] = OrderedDict()
             boxes_past_in_current_coor_dict[past_frame]['pred_box_3dcorner_tensor'] = \
-                project_box3d(detections['pred_box_3dcorner_tensor'].float(), past_to_current)
-            boxes_past_in_current_coor_dict[past_frame]['scores'] = detections['scores']
+                project_box3d(detections['pred_box_3dcorner_tensor'].float(), past_to_current) # （n, 8, 3）
+            boxes_past_in_current_coor_dict[past_frame]['scores'] = detections['scores'] # (n)
 
 
         # step 2: draw GT box
@@ -74,7 +75,7 @@ def draw_trajectory(pt_file, save_path):
 
         # step 3: visualze detection result, compensation, Establish inverted indices
         matched_idx_list = data['matched_idx_list']
-        match_pairs = matched_idx_list[agent_id - 1]
+        match_pairs = matched_idx_list[agent_id - 1] # 减去1是因为
         label_1 = [''] * boxes_past_in_current_coor_dict[1]['pred_box_3dcorner_tensor'].shape[0]
         label_0 = [''] * boxes_past_in_current_coor_dict[0]['pred_box_3dcorner_tensor'].shape[0]
         
@@ -93,7 +94,7 @@ def draw_trajectory(pt_file, save_path):
         canvas.draw_boxes(pred_box_np_0,colors=(int(255*0.8),0,0), texts=label_0)
 
         ## compensate box
-        compensate_box_np = data['compensated_results_list'][agent_id-1].cpu().numpy()
+        compensate_box_np = data['compensated_results_list'][agent_id-1].cpu().numpy() # （N_obj, 4, 3）
 
         if compensate_box_np.shape[0] == 0:
             print("Error: no compensate box: ", pt_file, " ", agent_id)
@@ -103,32 +104,39 @@ def draw_trajectory(pt_file, save_path):
         canvas.draw_boxes(compensate_box_np,colors=(0, int(255*0.83), int(255*0.83)), texts=['cp']*compensate_box_np.shape[0])
 
 
-
-
         # step 4: draw lidar point cloud
         pcd_np = data['single_lidar'][agent_id].cpu().numpy()
         canvas_xy, valid_mask = canvas.get_canvas_coords(pcd_np) # Get Canvas Coords
         canvas.draw_canvas_points(canvas_xy[valid_mask]) # Only draw valid points
 
+        print('gt_box_np is :', gt_box_np.shape)
+        print('pred_box_np_1 is :', pred_box_np_1.shape)
+        print('pred_box_np_0 is :', pred_box_np_0.shape)
+        print('compensate_box_np is :', compensate_box_np.shape)
+        print('pcd_np is :', pcd_np.shape)
 
         plt.axis("off")
         plt.imshow(canvas.canvas)
         plt.tight_layout()
         save_name = pt_file.split("/")[-1].rstrip(".pt")
-        plt.savefig(f"{save_path}{save_name}_{agent_id}.png", dpi=400)
+        save_path_cav = os.path.join(save_path, f"{save_name}_{agent_id}.png")
+        plt.savefig(save_path_cav, dpi=400)
         plt.close()
+        print('save file name is : ', f"{save_path}{save_name}_{agent_id}.png")
+
 
 
 def main():
-    data_dir = '/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_reverse_0.50/bbx_folder' #'/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_521_trick_reverse_new_0.50_0'
-
+    # data_dir = '/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_reverse_0.50/bbx_folder' #'/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_521_trick_reverse_new_0.50_0'
+    data_dir = '/public/home/lilingzhi/xyj/logs/logs/v2xset_pointpillar_where2comm_maxfusion_resnet_2024_04_20_16_12_53/vis_ir_thre_0_d_20_0.00_noise_0_0_0_0_roi_-1/' #'/remote-home/share/sizhewei/logs/irv2v_where2comm_cobevflow_w_dir_finetune/vis_cobevflow_521_trick_reverse_new_0.50_0'
     files = glob.glob(os.path.join(data_dir, 'bbx_folder', '*.pt'))
     files.sort()
+    # print("files sort completed!")
 
     save_path = os.path.join(data_dir, 'multi_results')
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-
+    # print('files are:',files)
     for file in files:
         draw_trajectory(file, save_path)
 
