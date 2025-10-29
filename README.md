@@ -1,3 +1,17 @@
+# CoDynTrust: Robust Asynchronous Collaborative Perception via Dynamic Feature Trust Modulus
+ICRA 2025 paper: "CoDynTrust: Robust Asynchronous Collaborative Perception via Dynamic Feature Trust Modulus" code
+
+</div>
+
+<h3 align="center">
+  <a href="https://arxiv.org/abs/2502.08169">arXiv</a> |
+  Demo |
+  <a href="https://github.com/CrazyShout/CoDynTrust">Code</a>
+</h3>
+
+<br><br>
+
+The code is coming soon.
 # <div align="center">CoBEVFlow (NeurIPS 2023)</div>
 This repository contains the official PyTorch implementation of NeurIPS 2023 paper "[Asynchrony-Robust Collaborative Perception via Bird’s Eye View Flow](https://arxiv.org/abs/2309.16940)". 
 [Sizhe Wei](https://sizhewei.github.io/), [Yuxi Wei](https://www.linkedin.cn/incareer/in/ACoAADSxRKcB7zJIIKFvPU9bvO1G2BT7Mx6S4vw), [Yue Hu](https://phyllish.github.io), [Yifan Lu](https://yifanlu0227.github.io/), [Yiqi Zhong](https://scholar.google.com/citations?user=Bv8l8jkAAAAJ&hl=en&authuser=1), [Siheng Chen](http://siheng-chen.github.io/), [Ya Zhang](https://mediabrain.sjtu.edu.cn/yazhang/).
