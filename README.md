@@ -11,8 +11,8 @@ ICRA 2025 paper: "CoDynTrust: Robust Asynchronous Collaborative Perception via D
 
 <br><br>
 
-The code is coming soon.
-# <div align="center">CoBEVFlow (NeurIPS 2023)</div>
+Because I'm lazy, I won't write the readme in detail. The code is a reproducible version. Please refer to its code for training and inference. For environment configuration, please refer to CoBEVFlow's configuration, because CoDynTrust is based on CoBEVFlow's code baseline.
+<!-- # <div align="center">CoBEVFlow (NeurIPS 2023)</div>
 This repository contains the official PyTorch implementation of NeurIPS 2023 paper "[Asynchrony-Robust Collaborative Perception via Bird’s Eye View Flow](https://arxiv.org/abs/2309.16940)". 
 [Sizhe Wei](https://sizhewei.github.io/), [Yuxi Wei](https://www.linkedin.cn/incareer/in/ACoAADSxRKcB7zJIIKFvPU9bvO1G2BT7Mx6S4vw), [Yue Hu](https://phyllish.github.io), [Yifan Lu](https://yifanlu0227.github.io/), [Yiqi Zhong](https://scholar.google.com/citations?user=Bv8l8jkAAAAJ&hl=en&authuser=1), [Siheng Chen](http://siheng-chen.github.io/), [Ya Zhang](https://mediabrain.sjtu.edu.cn/yazhang/).
 
@@ -138,4 +138,11 @@ If you are using CoBEVFlow, or IRV2V dataset for your research, please cite the 
 Many thanks to these excellent open source projects:
 - [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD)
 - [Where2comm](https://github.com/MediaBrain-SJTU/Where2comm)
+- [CoAlign](https://github.com/yifanlu0227/CoAlign) -->
+
+## Acknowledgement
+Many thanks to these excellent open source projects:
+- [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD)
+- [Where2comm](https://github.com/MediaBrain-SJTU/Where2comm)
 - [CoAlign](https://github.com/yifanlu0227/CoAlign)
+- [CoBEVFlow](https://github.com/MediaBrain-SJTU/CoBEVFlow)
